@@ -14,21 +14,7 @@
 </head>
 <body>
 
-  <div class="deck-bar">
-    <div class="deck-select-wrap" id="deckSelectWrap">
-      <select id="deckSelect" class="deck-select"></select>
-
-      <!-- Hiện ra khi nhấn giữ vào bộ thẻ đang chọn -->
-      <div class="deck-delete-popover" id="deckDeletePopover" hidden>
-        <button id="deleteDeckBtn" class="delete-popover-btn">🗑 Xóa bộ này</button>
-      </div>
-    </div>
-    <button id="newDeckBtn" class="deck-btn deck-btn-primary">➕ Bộ mới</button>
-  </div>
-
   <p id="storageWarning" class="storage-warning" hidden></p>
-
-  <p class="hint">Bấm để lật · Vuốt để chuyển thẻ · Giữ để xóa</p>
 
   <div class="card" id="card">
     <div class="card-content" id="cardContent">
@@ -41,12 +27,21 @@
     </div>
   </div>
 
-  <p class="counter" id="counter"></p>
+  <!-- Thanh công cụ - gói gọn trên 1 hàng ngang, cuộn ngang nếu màn hình hẹp không đủ chỗ -->
+  <div class="toolbar">
+    <div class="deck-select-wrap" id="deckSelectWrap">
+      <select id="deckSelect" class="deck-select"></select>
 
-  <div class="card-actions">
+      <!-- Hiện ra khi nhấn giữ vào bộ thẻ đang chọn -->
+      <div class="deck-delete-popover" id="deckDeletePopover" hidden>
+        <button id="deleteDeckBtn" class="delete-popover-btn">🗑 Xóa bộ này</button>
+      </div>
+    </div>
+    <button id="newDeckBtn" class="deck-btn">➕ Bộ mới</button>
     <button id="speakBtn" class="deck-btn">🔊 Đọc lại</button>
     <button id="editCardBtn" class="deck-btn">✏️ Sửa</button>
-    <button id="addCardBtn" class="deck-btn deck-btn-primary">➕ Thêm thẻ</button>
+    <button id="addCardBtn" class="deck-btn">➕ Thêm thẻ</button>
+    <span class="counter" id="counter"></span>
   </div>
 
   <div class="upload">

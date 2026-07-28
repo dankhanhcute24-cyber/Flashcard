@@ -8,36 +8,44 @@ body {
   overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
-.hint {
-  color: #777;
-  margin-top: 0;
-  margin-bottom: 30px;
-}
-
-.deck-bar {
-  display: flex;
-  justify-content: center;
+/* Thanh công cụ dưới thẻ - luôn nằm gọn trên 1 hàng ngang (flex-wrap: nowrap).
+   Nếu màn hình không đủ chỗ, hàng này tự cuộn ngang (overflow-x: auto) thay vì
+   xuống dòng, để không phá vỡ bố cục 1 hàng. Dùng display: inline-flex để
+   text-align: center của body tự canh giữa cả khối khi nó vừa đủ chỗ. */
+.toolbar {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
-  margin-bottom: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 16px;
+  padding: 4px 4px 10px 4px;
 }
 
+/* Không co bóp méo các phần tử bên trong khi thiếu chỗ - thà cuộn ngang còn hơn */
+.toolbar > * {
+  flex-shrink: 0;
+}
+
+/* Dropdown chọn bộ thẻ - nhỏ gọn, tông trung tính để không tranh nổi bật với thẻ */
 .deck-select {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 15px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 2px solid #1565C0;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid #C7C7C7;
   background-color: #ffffff;
-  color: #1a1a1a;
-  max-width: 220px;
+  color: #666666;
+  max-width: 200px;
   cursor: pointer;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .deck-select:hover {
-  border-color: #0D47A1;
+  border-color: #999999;
+  background-color: #F5F5F5;
 }
 
 /* Bọc ngoài dropdown để: 1) làm điểm neo định vị popover xóa bộ,
@@ -48,30 +56,39 @@ body {
   display: inline-block;
 }
 
+/* Nút thanh công cụ - nhỏ gọn, chỉ viền mỏng, tông trung tính nhạt để
+   không cạnh tranh sự chú ý với thẻ flashcard (thẻ mới là trọng tâm) */
 .deck-btn {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 2px solid #1565C0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #C7C7C7;
   background-color: transparent;
-  color: #1565C0;
+  color: #666666;
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  white-space: nowrap;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .deck-btn:hover {
-  background-color: #E8F0FB;
+  background-color: #F0F0F0;
+  border-color: #999999;
 }
 
+/* .deck-btn-primary vẫn giữ màu xanh đậm nổi bật - chỉ dùng cho nút "Lưu"
+   trong form thêm/sửa thẻ (một hành động xác nhận rõ ràng trong modal),
+   không dùng cho các nút thanh công cụ quanh thẻ nữa */
 .deck-btn-primary {
   background-color: #1565C0;
   color: #ffffff;
+  border-color: #1565C0;
 }
 
 .deck-btn-primary:hover {
   background-color: #0D47A1;
+  border-color: #0D47A1;
 }
 
 .deck-btn:disabled,
@@ -82,19 +99,11 @@ body {
 
 .deck-btn:disabled:hover {
   background-color: transparent;
+  border-color: #C7C7C7;
 }
 
 .deck-btn-primary:disabled:hover {
   background-color: #1565C0;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-  margin-bottom: 12px;
 }
 
 /* Nút xóa dùng chung cho cả popover xóa bộ và popover xóa thẻ */
@@ -277,10 +286,11 @@ body {
 }
 
 .counter {
-  margin-top: 14px;
   color: #999;
   font-size: 13px;
   letter-spacing: 0.5px;
+  padding: 0 4px;
+  white-space: nowrap;
 }
 
 .upload {
