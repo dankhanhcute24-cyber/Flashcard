@@ -14,6 +14,9 @@ const SWIPE_ANIMATION_MS = 250; // thời gian (ms) cho hiệu ứng thẻ trư�
 const LONG_PRESS_MS = 600; // giữ yên khoảng thời gian này mới tính là "nhấn giữ"
 const LONG_PRESS_MOVE_THRESHOLD = 10; // px - di chuyển quá mức này trong lúc giữ thì hủy (đang vuốt, không phải giữ yên)
 
+const CONTENT_SCALE_STEP = 0.05; // mỗi bước thu nhỏ chữ đi 5%
+const MIN_CONTENT_SCALE = 0.55; // không thu nhỏ chữ xuống dưới 55% cỡ gốc, tránh chữ bé đến mức khó đọc
+
 // ============================================================
 // DỮ LIỆU MẶC ĐỊNH (dùng khi mở app lần đầu, chưa có gì trong localStorage)
 // ============================================================
@@ -290,6 +293,23 @@ function renderCard() {
   }
 
   counterEl.textContent = `${currentIndex + 1} / ${cards.length}`;
+  fitCardText();
+}
+
+// Thẻ có kích thước CỐ ĐỊNH (xem CSS .card), nên khi nội dung dài (từ nhiều chữ,
+// câu ví dụ dài...) có thể bị tràn ra ngoài. Hàm này tự giảm dần cỡ chữ
+// (thông qua biến CSS --content-scale, nhân vào mọi font-size trong thẻ) cho tới
+// khi nội dung vừa khít chiều cao thẻ, hoặc tới khi chạm mức thu nhỏ tối thiểu.
+function fitCardText() {
+  let scale = 1;
+  cardEl.style.setProperty("--content-scale", scale);
+
+  // Đọc cardEl.clientHeight/cardContentEl.scrollHeight sẽ ép trình duyệt tính lại
+  // layout ngay lập tức, nên phép so sánh dưới đây luôn phản ánh đúng trạng thái mới nhất
+  while (cardContentEl.scrollHeight > cardEl.clientHeight && scale > MIN_CONTENT_SCALE) {
+    scale = Math.max(MIN_CONTENT_SCALE, scale - CONTENT_SCALE_STEP);
+    cardEl.style.setProperty("--content-scale", scale);
+  }
 }
 
 // Đọc to từ tiếng Trung bằng giọng đọc có sẵn của trình duyệt

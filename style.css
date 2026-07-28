@@ -182,12 +182,13 @@ body {
 /* Kích thước thẻ mặc định = tối ưu cho ĐIỆN THOẠI (thiết kế "mobile-first").
    Dùng % (theo chiều rộng của phần tử cha, đã trừ sẵn padding) thay vì vw,
    để chắc chắn thẻ không bao giờ tràn ra ngoài màn hình dù điện thoại nhỏ đến đâu.
-   min-height được đặt gần bằng width để thẻ có dáng vuông thay vì dẹt như trước. */
+   height CỐ ĐỊNH (không phải min-height) - thẻ không phóng to theo nội dung nữa.
+   Thay vào đó, cỡ chữ tự thu nhỏ để vừa khít (xem biến --content-scale và script.js). */
 .card {
   position: relative; /* để .card-delete-popover phủ đúng lên thẻ này */
   width: 92%;
   max-width: 420px;
-  min-height: 380px;
+  height: 380px;
   margin: 0 auto;
   background-color: #ffffff;
   border: 2px solid #1565C0;
@@ -195,29 +196,30 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden; /* phòng hờ khi chữ đã thu nhỏ tới mức tối thiểu mà vẫn còn dư chút ít */
   cursor: pointer;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   user-select: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, width 0.2s ease, min-height 0.2s ease;
+  transition: width 0.2s ease, height 0.2s ease; /* mượt khi đổi kích thước theo breakpoint - không còn hiệu ứng hover/nhấn trên thẻ */
   touch-action: pan-y; /* để trình duyệt giao cử chỉ vuốt ngang cho JS xử lý, không tự cuộn trang */
-}
 
-.card:hover {
-  transform: scale(1.03);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}
-
-.card:active {
-  transform: scale(0.97);
+  /* Cỡ chữ gốc (ứng với điện thoại) - JS đọc/ghi --content-scale để thu nhỏ khi nội dung dài */
+  --hanzi-size: 58px;
+  --pinyin-size: 20px;
+  --meaning-size: 34px;
+  --example-hanzi-size: 24px;
+  --example-sub-size: 15px;
+  --content-scale: 1;
 }
 
 .card-content {
   padding: 20px;
+  max-width: 100%;
 }
 
 .hanzi {
   font-family: 'Noto Sans SC', sans-serif;
-  font-size: 58px;
+  font-size: calc(var(--hanzi-size) * var(--content-scale));
   font-weight: 700;
   color: #1a1a1a; /* đen */
   margin: 0;
@@ -225,7 +227,7 @@ body {
 
 .pinyin {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 20px;
+  font-size: calc(var(--pinyin-size) * var(--content-scale));
   font-weight: 500;
   margin: 8px 0 0 0;
 }
@@ -237,7 +239,7 @@ body {
 
 .meaning {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 34px;
+  font-size: calc(var(--meaning-size) * var(--content-scale));
   font-weight: 600;
   color: #2E7D32; /* xanh lá */
   margin: 0;
@@ -252,21 +254,21 @@ body {
 
 .example-hanzi {
   font-family: 'Noto Sans SC', sans-serif;
-  font-size: 24px;
+  font-size: calc(var(--example-hanzi-size) * var(--content-scale));
   color: #1a1a1a; /* giống màu chữ Hán chính, chỉ nhỏ hơn */
   margin: 0;
 }
 
 .example-pinyin {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 15px;
+  font-size: calc(var(--example-sub-size) * var(--content-scale));
   font-weight: 500;
   margin: 4px 0 0 0;
 }
 
 .example-meaning {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 15px;
+  font-size: calc(var(--example-sub-size) * var(--content-scale));
   font-style: italic;
   color: #555555;
   margin: 4px 0 0 0;
@@ -421,33 +423,19 @@ body {
   .card {
     width: 540px;
     max-width: 92%;
-    min-height: 300px;
-  }
+    height: 300px;
 
-  .hanzi {
-    font-size: 100px;
-  }
-
-  .pinyin {
-    font-size: 38px;
-  }
-
-  .meaning {
-    font-size: 56px;
+    /* Cỡ chữ gốc lớn hơn cho màn hình rộng - vẫn nhân với --content-scale như trên điện thoại */
+    --hanzi-size: 100px;
+    --pinyin-size: 38px;
+    --meaning-size: 56px;
+    --example-hanzi-size: 38px;
+    --example-sub-size: 24px;
   }
 
   .example {
     margin-top: 20px;
     padding-top: 20px;
-  }
-
-  .example-hanzi {
-    font-size: 38px;
-  }
-
-  .example-pinyin,
-  .example-meaning {
-    font-size: 24px;
   }
 
   .empty-state {
