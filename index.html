@@ -61,7 +61,10 @@
       <h2 id="cardFormTitle">Thêm thẻ mới</h2>
       <form id="cardForm">
         <label for="formHanzi">Chữ Hán</label>
-        <input type="text" id="formHanzi" required>
+        <div class="input-with-btn">
+          <input type="text" id="formHanzi" required>
+          <button type="button" id="autoPinyinBtn" class="mini-btn" title="Tự động điền pinyin">🔤</button>
+        </div>
 
         <label for="formPinyin">Pinyin</label>
         <input type="text" id="formPinyin" required>
@@ -72,7 +75,10 @@
         <p class="modal-divider">Câu ví dụ (không bắt buộc)</p>
 
         <label for="formExampleHanzi">Câu ví dụ - Chữ Hán</label>
-        <input type="text" id="formExampleHanzi">
+        <div class="input-with-btn">
+          <input type="text" id="formExampleHanzi">
+          <button type="button" id="autoExamplePinyinBtn" class="mini-btn" title="Tự động điền pinyin cho câu ví dụ">🔤</button>
+        </div>
 
         <label for="formExamplePinyin">Pinyin câu ví dụ</label>
         <input type="text" id="formExamplePinyin">
@@ -90,6 +96,8 @@
 
   <!-- Thư viện SheetJS để đọc file Excel ngay trong trình duyệt -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Dữ liệu pinyin rút gọn từ CC-CEDICT (chỉ chữ Hán giản thể -> pinyin, ~120.000 từ, đã bỏ phần nghĩa tiếng Anh) -->
+  <script src="cedict-pinyin.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

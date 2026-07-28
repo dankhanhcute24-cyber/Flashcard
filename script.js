@@ -21,6 +21,8 @@ const COUNTER_RESERVED_HEIGHT = 24; // px - chừa chỗ cho chỉ số vị tr�
 const NEW_DECK_OPTION_VALUE = "__new_deck__"; // giá trị đặc biệt của dòng "➕ Tạo bộ mới" trong dropdown
 const TOOLTIP_AUTO_HIDE_MS = 3000; // tự ẩn tooltip sau chừng này nếu người dùng không chạm ra chỗ khác
 
+const MAX_SEGMENT_WORD_LEN = 8; // độ dài cụm từ dài nhất thử tra khi tách câu ví dụ thành pinyin
+
 // ============================================================
 // DỮ LIỆU MẶC ĐỊNH (dùng khi mở app lần đầu, chưa có gì trong localStorage)
 // ============================================================
@@ -183,9 +185,11 @@ const cardForm = document.getElementById("cardForm");
 const cardFormTitleEl = document.getElementById("cardFormTitle");
 const cancelFormBtn = document.getElementById("cancelFormBtn");
 const formHanziEl = document.getElementById("formHanzi");
+const autoPinyinBtn = document.getElementById("autoPinyinBtn");
 const formPinyinEl = document.getElementById("formPinyin");
 const formMeaningEl = document.getElementById("formMeaning");
 const formExampleHanziEl = document.getElementById("formExampleHanzi");
+const autoExamplePinyinBtn = document.getElementById("autoExamplePinyinBtn");
 const formExamplePinyinEl = document.getElementById("formExamplePinyin");
 const formExampleMeaningEl = document.getElementById("formExampleMeaning");
 
@@ -811,6 +815,107 @@ document.addEventListener(
 // ============================================================
 // THÊM / SỬA / XÓA TỪNG THẺ BẰNG TAY (áp dụng cho bộ thẻ đang chọn)
 // ============================================================
+
+// ------------------------------------------------------------
+// Tự động điền pinyin từ dữ liệu CC-CEDICT (biến toàn cục CEDICT_PINYIN,
+// nạp sẵn từ file cedict-pinyin.js - xem index.html). Dùng CHUNG 1 hàm tách
+// từ cho cả ô "Chữ Hán" (1 từ) và ô "Câu ví dụ - Chữ Hán" (nhiều từ liên
+// tiếp), để cả 2 nơi đều ưu tiên nhận diện từ ghép giống nhau.
+//
+// Cách xử lý: dùng thuật toán "khớp tối đa hướng trước" (forward maximum
+// matching) - một cách tách từ tiếng Trung đơn giản, không cần thư viện NLP:
+// tại mỗi vị trí trong chuỗi, thử tra cụm DÀI NHẤT có thể trước (tối đa
+// MAX_SEGMENT_WORD_LEN chữ), giảm dần xuống 1 chữ cho tới khi tìm thấy trong
+// từ điển. Nhờ luôn ưu tiên cụm dài nhất, từ ghép nhiều chữ như "认识" hay
+// "高兴" sẽ được tra đúng pinyin của CẢ TỪ ("rènshi", "gāoxìng") ngay từ bước
+// thử "2 chữ", trước khi thuật toán kịp tách nhỏ xuống "1 chữ" (chỉ tra
+// riêng lẻ khi không tìm được cụm ghép nào chứa nó) - nên không còn bị tách
+// rời sai thanh điệu như tra từng chữ đơn lẻ nữa.
+// ------------------------------------------------------------
+
+function lookupHanziPinyin(text) {
+  if (!text || typeof CEDICT_PINYIN === "undefined") return "";
+
+  const chars = Array.from(text);
+  const tokens = [];
+  let i = 0;
+
+  while (i < chars.length) {
+    let matched = false;
+    const maxLen = Math.min(MAX_SEGMENT_WORD_LEN, chars.length - i);
+
+    // Thử cụm dài nhất trước, ngắn dần - khớp được cụm dài hơn thì dừng ngay
+    for (let len = maxLen; len >= 1; len--) {
+      const chunk = chars.slice(i, i + len).join("");
+      if (CEDICT_PINYIN[chunk]) {
+        tokens.push(CEDICT_PINYIN[chunk]);
+        i += len;
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      const ch = chars[i];
+      const isHanzi = /[一-鿿]/.test(ch);
+
+      if (!isHanzi && tokens.length > 0) {
+        // Dấu câu (， 。 ...) hoặc ký tự khác không phải chữ Hán -> gắn liền
+        // vào cuối từ pinyin ngay trước đó, giữ đúng vị trí, không tách rời bằng khoảng trắng
+        tokens[tokens.length - 1] += ch;
+      } else {
+        // Chữ Hán hiếm không tra được (kể cả khi ghép với chữ xung quanh) ->
+        // giữ nguyên chữ đó làm 1 "từ" riêng, để thấy rõ vị trí cần tự bổ
+        // sung pinyin, không bị lẫn vào chữ khác
+        tokens.push(ch);
+      }
+      i += 1;
+    }
+  }
+
+  return tokens.join(" ");
+}
+
+// Rời khỏi ô "Chữ Hán" (blur) -> tự động điền pinyin, nhưng CHỈ khi ô pinyin
+// đang trống - để không ghi đè pinyin người dùng đã tự gõ hoặc đã chỉnh sửa
+formHanziEl.addEventListener("blur", () => {
+  if (formPinyinEl.value.trim()) return;
+  const pinyin = lookupHanziPinyin(formHanziEl.value.trim());
+  if (pinyin) {
+    formPinyinEl.value = pinyin;
+  }
+});
+
+// Bấm nút "🔤" bên cạnh ô Chữ Hán -> tra và điền lại pinyin ngay lập tức
+// (hành động chủ động của người dùng nên luôn ghi đè, không cần kiểm tra trống)
+autoPinyinBtn.addEventListener("click", () => {
+  const pinyin = lookupHanziPinyin(formHanziEl.value.trim());
+  if (pinyin) {
+    formPinyinEl.value = pinyin;
+  } else {
+    formPinyinEl.focus(); // không tìm thấy trong từ điển - để người dùng tự gõ tay
+  }
+});
+
+// Rời khỏi ô "Câu ví dụ - Chữ Hán" (blur) -> tự động điền, chỉ khi ô pinyin
+// câu ví dụ đang trống (không ghi đè pinyin đã tự gõ/chỉnh sửa)
+formExampleHanziEl.addEventListener("blur", () => {
+  if (formExamplePinyinEl.value.trim()) return;
+  const pinyin = lookupHanziPinyin(formExampleHanziEl.value.trim());
+  if (pinyin) {
+    formExamplePinyinEl.value = pinyin;
+  }
+});
+
+// Bấm nút "🔤" bên cạnh ô câu ví dụ -> tra và điền lại ngay (luôn ghi đè)
+autoExamplePinyinBtn.addEventListener("click", () => {
+  const pinyin = lookupHanziPinyin(formExampleHanziEl.value.trim());
+  if (pinyin) {
+    formExamplePinyinEl.value = pinyin;
+  } else {
+    formExamplePinyinEl.focus();
+  }
+});
 
 // Mở form ở chế độ "Thêm thẻ mới" - các ô nhập để trống
 function openAddCardForm() {

@@ -420,6 +420,37 @@ body {
   border-color: #1565C0;
 }
 
+/* Hàng chứa ô "Chữ Hán" + nút nhỏ "Tự động điền pinyin" ngay bên cạnh */
+.input-with-btn {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.input-with-btn input[type="text"] {
+  flex: 1;
+  min-width: 0; /* để input co lại đúng, không đẩy nút ra ngoài khung modal */
+}
+
+.mini-btn {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-family: 'Be Vietnam Pro', sans-serif;
+  font-size: 15px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid #C7C7C7;
+  background-color: transparent;
+  color: #666666;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.mini-btn:hover {
+  background-color: #F0F0F0;
+  border-color: #999999;
+}
+
 .modal-divider {
   margin: 18px 0 0 0;
   padding-top: 12px;
