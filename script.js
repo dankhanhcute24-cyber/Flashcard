@@ -26,7 +26,7 @@ function renderCard() {
   } else {
     cardContentEl.innerHTML = `
       <p class="hanzi">${card.hanzi}</p>
-      <p class="pinyin">${card.pinyin}</p>
+      <p class="pinyin pinyin-front">${card.pinyin}</p>
     `;
   }
 

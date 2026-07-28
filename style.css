@@ -1,7 +1,7 @@
 body {
-  font-family: Arial, sans-serif;
-  background-color: #f5f5f5;
-  color: #333;
+  font-family: 'Be Vietnam Pro', Arial, sans-serif;
+  background-color: #FAF3E8; /* trắng ngà */
+  color: #1a1a1a;
   text-align: center;
   margin: 0;
   padding: 40px 20px;
@@ -22,7 +22,7 @@ h1 {
   height: 200px;
   margin: 0 auto;
   background-color: #ffffff;
-  border: 2px solid #4a90d9;
+  border: 2px solid #1565C0;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -42,20 +42,30 @@ h1 {
 }
 
 .hanzi {
+  font-family: 'Noto Sans SC', sans-serif;
   font-size: 48px;
-  font-weight: bold;
+  font-weight: 700;
+  color: #1a1a1a; /* đen */
   margin: 0;
 }
 
 .pinyin {
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 18px;
-  color: #4a90d9;
+  font-weight: 500;
   margin: 8px 0 0 0;
 }
 
+/* Mặt trước: pinyin màu xám nhạt, nhẹ hơn chữ Hán để không nổi bằng */
+.pinyin-front {
+  color: #6B7280;
+}
+
 .meaning {
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 28px;
-  color: #2e7d32;
+  font-weight: 600;
+  color: #2E7D32; /* xanh lá */
   margin: 0;
 }
 
@@ -72,15 +82,17 @@ h1 {
 }
 
 button {
+  font-family: 'Be Vietnam Pro', sans-serif;
   padding: 10px 18px;
   font-size: 16px;
+  font-weight: 600;
   border: none;
   border-radius: 8px;
-  background-color: #4a90d9;
-  color: white;
+  background-color: #1565C0;
+  color: #ffffff;
   cursor: pointer;
 }
 
 button:hover {
-  background-color: #3a7cc0;
+  background-color: #0D47A1;
 }
