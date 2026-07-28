@@ -185,11 +185,9 @@ const cardForm = document.getElementById("cardForm");
 const cardFormTitleEl = document.getElementById("cardFormTitle");
 const cancelFormBtn = document.getElementById("cancelFormBtn");
 const formHanziEl = document.getElementById("formHanzi");
-const autoPinyinBtn = document.getElementById("autoPinyinBtn");
 const formPinyinEl = document.getElementById("formPinyin");
 const formMeaningEl = document.getElementById("formMeaning");
 const formExampleHanziEl = document.getElementById("formExampleHanzi");
-const autoExamplePinyinBtn = document.getElementById("autoExamplePinyinBtn");
 const formExamplePinyinEl = document.getElementById("formExamplePinyin");
 const formExampleMeaningEl = document.getElementById("formExampleMeaning");
 
@@ -891,17 +889,6 @@ formHanziEl.addEventListener("blur", () => {
   }
 });
 
-// Bấm nút "🔤" bên cạnh ô Chữ Hán -> tra và điền lại pinyin ngay lập tức
-// (hành động chủ động của người dùng nên luôn ghi đè, không cần kiểm tra trống)
-autoPinyinBtn.addEventListener("click", () => {
-  const pinyin = lookupHanziPinyin(formHanziEl.value.trim());
-  if (pinyin) {
-    formPinyinEl.value = pinyin;
-  } else {
-    formPinyinEl.focus(); // không tìm thấy trong từ điển - để người dùng tự gõ tay
-  }
-});
-
 // Rời khỏi ô "Câu ví dụ - Chữ Hán" (blur) -> tự động điền, chỉ khi ô pinyin
 // câu ví dụ đang trống (không ghi đè pinyin đã tự gõ/chỉnh sửa)
 formExampleHanziEl.addEventListener("blur", () => {
@@ -909,16 +896,6 @@ formExampleHanziEl.addEventListener("blur", () => {
   const pinyin = lookupHanziPinyin(formExampleHanziEl.value.trim());
   if (pinyin) {
     formExamplePinyinEl.value = pinyin;
-  }
-});
-
-// Bấm nút "🔤" bên cạnh ô câu ví dụ -> tra và điền lại ngay (luôn ghi đè)
-autoExamplePinyinBtn.addEventListener("click", () => {
-  const pinyin = lookupHanziPinyin(formExampleHanziEl.value.trim());
-  if (pinyin) {
-    formExamplePinyinEl.value = pinyin;
-  } else {
-    formExamplePinyinEl.focus();
   }
 });
 
