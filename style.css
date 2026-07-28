@@ -1,0 +1,86 @@
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f5f5f5;
+  color: #333;
+  text-align: center;
+  margin: 0;
+  padding: 40px 20px;
+}
+
+h1 {
+  margin-bottom: 4px;
+}
+
+.hint {
+  color: #777;
+  margin-top: 0;
+  margin-bottom: 30px;
+}
+
+.card {
+  width: 320px;
+  height: 200px;
+  margin: 0 auto;
+  background-color: #ffffff;
+  border: 2px solid #4a90d9;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  user-select: none;
+  transition: transform 0.15s ease;
+}
+
+.card:active {
+  transform: scale(0.97);
+}
+
+.card-content {
+  padding: 20px;
+}
+
+.hanzi {
+  font-size: 48px;
+  font-weight: bold;
+  margin: 0;
+}
+
+.pinyin {
+  font-size: 18px;
+  color: #4a90d9;
+  margin: 8px 0 0 0;
+}
+
+.meaning {
+  font-size: 28px;
+  color: #2e7d32;
+  margin: 0;
+}
+
+.counter {
+  margin-top: 16px;
+  color: #777;
+}
+
+.controls {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+button {
+  padding: 10px 18px;
+  font-size: 16px;
+  border: none;
+  border-radius: 8px;
+  background-color: #4a90d9;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #3a7cc0;
+}
