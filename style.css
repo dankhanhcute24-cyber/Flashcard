@@ -9,36 +9,41 @@ body {
 }
 
 /* Thanh công cụ dưới thẻ - luôn nằm gọn trên 1 hàng ngang (flex-wrap: nowrap).
-   Nếu màn hình không đủ chỗ, hàng này tự cuộn ngang (overflow-x: auto) thay vì
-   xuống dòng, để không phá vỡ bố cục 1 hàng. Dùng display: inline-flex để
-   text-align: center của body tự canh giữa cả khối khi nó vừa đủ chỗ. */
+   Đã tính toán kích thước để vừa khít kể cả trên điện thoại hẹp nhất (xem
+   .btn-label), nên KHÔNG dùng overflow-x: auto ở đây nữa - theo đặc tả CSS,
+   khi overflow-x khác "visible" mà overflow-y không khai báo riêng, trình
+   duyệt tự ép overflow-y cũng thành "auto" (tức là cũng bị cắt), khiến
+   tooltip bung lên phía trên nút "Tải file Excel" (bottom: 100%) bị cắt mất,
+   không hiện ra được. Dùng display: inline-flex để text-align: center của
+   body tự canh giữa cả khối khi nó vừa đủ chỗ. */
 .toolbar {
   display: inline-flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: 4px;
   max-width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
   margin-top: 16px;
   padding: 4px 4px 10px 4px;
 }
 
-/* Không co bóp méo các phần tử bên trong khi thiếu chỗ - thà cuộn ngang còn hơn */
+/* Không co bóp méo các phần tử bên trong khi thiếu chỗ (giữ nguyên kích thước nút/icon) */
 .toolbar > * {
   flex-shrink: 0;
 }
 
-/* Dropdown chọn bộ thẻ - nhỏ gọn, tông trung tính để không tranh nổi bật với thẻ */
+/* Dropdown chọn bộ thẻ - nhỏ gọn, tông trung tính để không tranh nổi bật với thẻ.
+   max-width nhỏ trên điện thoại (tên bộ thẻ dài sẽ bị cắt bớt), rộng hơn từ
+   600px trở lên (xem khối @media cuối file) vì lúc đó thanh công cụ dư chỗ. */
 .deck-select {
+  box-sizing: border-box;
   font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
-  padding: 5px 8px;
+  padding: 5px 6px;
   border-radius: 6px;
   border: 1px solid #C7C7C7;
   background-color: #ffffff;
   color: #666666;
-  max-width: 200px;
+  max-width: 108px;
   cursor: pointer;
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
@@ -59,10 +64,11 @@ body {
 /* Nút thanh công cụ - nhỏ gọn, chỉ viền mỏng, tông trung tính nhạt để
    không cạnh tranh sự chú ý với thẻ flashcard (thẻ mới là trọng tâm) */
 .deck-btn {
+  box-sizing: border-box;
   font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   font-weight: 600;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid #C7C7C7;
   background-color: transparent;
@@ -75,6 +81,14 @@ body {
 .deck-btn:hover {
   background-color: #F0F0F0;
   border-color: #999999;
+}
+
+/* Phần chữ trong nút - trên điện thoại (màn hình hẹp) chỉ hiện icon để cả
+   hàng công cụ vừa khít không cần cuộn ngang; từ 600px trở lên hiện đủ chữ */
+@media (max-width: 599px) {
+  .btn-label {
+    display: none;
+  }
 }
 
 /* .deck-btn-primary vẫn giữ màu xanh đậm nổi bật - chỉ dùng cho nút "Lưu"
@@ -287,43 +301,56 @@ body {
   line-height: 1.6;
 }
 
+/* Chỉ số vị trí thẻ - đặt cố định ở góc dưới bên phải của thẻ, nhỏ và mờ
+   nhạt để không làm rối nội dung chính. pointer-events: none để không cản
+   trở việc bấm/vuốt/giữ trên thẻ (nó chỉ là chữ hiển thị, không tương tác) */
 .counter {
-  color: #999;
-  font-size: 13px;
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  color: #B5B5B5;
+  font-size: 11px;
   letter-spacing: 0.5px;
-  padding: 0 4px;
   white-space: nowrap;
+  pointer-events: none;
 }
 
-.upload {
-  margin-top: 28px;
+/* Bọc ngoài nút "Tải file Excel" để làm điểm neo định vị tooltip
+   và là nơi lắng nghe cử chỉ chạm giữ trên thiết bị cảm ứng */
+.tooltip-wrap {
+  position: relative;
+  display: inline-flex;
 }
 
-.upload-btn {
-  display: inline-block;
-  font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 15px;
-  font-weight: 600;
-  padding: 9px 16px;
-  border: 2px solid #1565C0;
-  border-radius: 8px;
-  background-color: transparent;
-  color: #1565C0;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.upload-btn:hover {
-  background-color: #E8F0FB;
-}
-
-.upload-hint {
-  margin-top: 8px;
+/* Tooltip - ẩn mặc định, chỉ hiện khi hover (chuột) hoặc chạm giữ (cảm ứng, qua class .show-tooltip) */
+.tooltip-text {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  width: 240px;
+  max-width: 70vw;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background-color: #333333;
+  color: #ffffff;
   font-size: 12px;
-  color: #777;
-  max-width: 360px;
-  margin-left: auto;
-  margin-right: auto;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none; /* tooltip không bao giờ cản trở việc bấm nút hoặc cuộn thanh công cụ */
+  transition: opacity 0.15s ease;
+  z-index: 30;
+}
+
+.tooltip-wrap:hover .tooltip-text,
+.tooltip-wrap.show-tooltip .tooltip-text {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* Form thêm/sửa thẻ - hiện dạng modal, ẩn mặc định (chỉ hiện khi có class "open") */
@@ -440,5 +467,10 @@ body {
 
   .empty-state {
     font-size: 24px;
+  }
+
+  /* Từ 600px trở lên, thanh công cụ hiện đủ chữ (xem .btn-label) nên dư chỗ hơn */
+  .deck-select {
+    max-width: 220px;
   }
 }

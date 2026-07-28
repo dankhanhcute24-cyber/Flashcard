@@ -25,11 +25,16 @@
     <div class="card-delete-popover" id="cardDeletePopover" hidden>
       <button id="deleteCardBtn" class="delete-popover-btn">🗑 Xóa thẻ này</button>
     </div>
+
+    <!-- Chỉ số vị trí thẻ - đặt cố định ở góc dưới bên phải của thẻ -->
+    <span class="counter" id="counter"></span>
   </div>
 
-  <!-- Thanh công cụ - gói gọn trên 1 hàng ngang, cuộn ngang nếu màn hình hẹp không đủ chỗ -->
+  <!-- Thanh công cụ - gói gọn trên 1 hàng ngang, không cuộn ngang kể cả trên điện thoại
+       (trên màn hình hẹp, phần chữ trong nút tự ẩn, chỉ còn icon, xem .btn-label trong CSS) -->
   <div class="toolbar">
     <div class="deck-select-wrap" id="deckSelectWrap">
+      <!-- Dòng đầu tiên "➕ Tạo bộ mới" được JS thêm vào trong renderDeckSelect() -->
       <select id="deckSelect" class="deck-select"></select>
 
       <!-- Hiện ra khi nhấn giữ vào bộ thẻ đang chọn -->
@@ -37,20 +42,17 @@
         <button id="deleteDeckBtn" class="delete-popover-btn">🗑 Xóa bộ này</button>
       </div>
     </div>
-    <button id="newDeckBtn" class="deck-btn">➕ Bộ mới</button>
-    <button id="speakBtn" class="deck-btn">🔊 Đọc lại</button>
-    <button id="editCardBtn" class="deck-btn">✏️ Sửa</button>
-    <button id="addCardBtn" class="deck-btn">➕ Thêm thẻ</button>
-    <span class="counter" id="counter"></span>
-  </div>
+    <button id="speakBtn" class="deck-btn">🔊<span class="btn-label"> Đọc lại</span></button>
+    <button id="editCardBtn" class="deck-btn">✏️<span class="btn-label"> Sửa</span></button>
+    <button id="addCardBtn" class="deck-btn">➕<span class="btn-label"> Thêm thẻ</span></button>
 
-  <div class="upload">
-    <label for="excelFile" class="upload-btn">📂 Tải file Excel</label>
-    <input type="file" id="excelFile" accept=".xlsx,.xls" hidden>
-    <p class="upload-hint">
-      Cột theo thứ tự: Chữ Hán | Pinyin | Nghĩa | Câu ví dụ | Pinyin câu ví dụ | Nghĩa câu ví dụ (dòng 1 là tiêu đề).
-      Dữ liệu sẽ nhập vào bộ thẻ đang chọn ở trên.
-    </p>
+    <div class="tooltip-wrap" id="uploadTooltipWrap">
+      <label for="excelFile" class="deck-btn">📂<span class="btn-label"> Tải file Excel</span></label>
+      <input type="file" id="excelFile" accept=".xlsx,.xls" hidden>
+      <span class="tooltip-text">
+        Cột theo thứ tự: Chữ Hán | Pinyin | Nghĩa | Câu ví dụ | Pinyin câu ví dụ | Nghĩa câu ví dụ (dòng 1 là tiêu đề). Dữ liệu sẽ nhập vào bộ thẻ đang chọn ở trên.
+      </span>
+    </div>
   </div>
 
   <!-- Form thêm/sửa thẻ - ẩn mặc định, JS sẽ hiện ra khi cần -->

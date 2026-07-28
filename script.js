@@ -16,6 +16,10 @@ const LONG_PRESS_MOVE_THRESHOLD = 10; // px - di chuyển quá mức này trong 
 
 const CONTENT_SCALE_STEP = 0.05; // mỗi bước thu nhỏ chữ đi 5%
 const MIN_CONTENT_SCALE = 0.55; // không thu nhỏ chữ xuống dưới 55% cỡ gốc, tránh chữ bé đến mức khó đọc
+const COUNTER_RESERVED_HEIGHT = 24; // px - chừa chỗ cho chỉ số vị trí thẻ ở góc dưới, tránh bị nội dung dài đè lên
+
+const NEW_DECK_OPTION_VALUE = "__new_deck__"; // giá trị đặc biệt của dòng "➕ Tạo bộ mới" trong dropdown
+const TOOLTIP_AUTO_HIDE_MS = 3000; // tự ẩn tooltip sau chừng này nếu người dùng không chạm ra chỗ khác
 
 // ============================================================
 // DỮ LIỆU MẶC ĐỊNH (dùng khi mở app lần đầu, chưa có gì trong localStorage)
@@ -162,9 +166,9 @@ const cardContentEl = document.getElementById("cardContent");
 const counterEl = document.getElementById("counter");
 const speakBtn = document.getElementById("speakBtn");
 const excelFileInput = document.getElementById("excelFile");
+const uploadTooltipWrap = document.getElementById("uploadTooltipWrap");
 const deckSelectEl = document.getElementById("deckSelect");
 const deckSelectWrap = document.getElementById("deckSelectWrap");
-const newDeckBtn = document.getElementById("newDeckBtn");
 const deleteDeckBtn = document.getElementById("deleteDeckBtn");
 const deckDeletePopover = document.getElementById("deckDeletePopover");
 const storageWarningEl = document.getElementById("storageWarning");
@@ -304,9 +308,13 @@ function fitCardText() {
   let scale = 1;
   cardEl.style.setProperty("--content-scale", scale);
 
+  // Chừa thêm khoảng trống bằng chiều cao chỉ số vị trí thẻ (góc dưới bên phải),
+  // để nội dung dài không bị chữ đó đè lên
+  const availableHeight = cardEl.clientHeight - COUNTER_RESERVED_HEIGHT;
+
   // Đọc cardEl.clientHeight/cardContentEl.scrollHeight sẽ ép trình duyệt tính lại
   // layout ngay lập tức, nên phép so sánh dưới đây luôn phản ánh đúng trạng thái mới nhất
-  while (cardContentEl.scrollHeight > cardEl.clientHeight && scale > MIN_CONTENT_SCALE) {
+  while (cardContentEl.scrollHeight > availableHeight && scale > MIN_CONTENT_SCALE) {
     scale = Math.max(MIN_CONTENT_SCALE, scale - CONTENT_SCALE_STEP);
     cardEl.style.setProperty("--content-scale", scale);
   }
@@ -332,6 +340,12 @@ function speakCurrentWord() {
 function renderDeckSelect() {
   deckSelectEl.innerHTML = "";
 
+  // Dòng đầu tiên luôn là lựa chọn đặc biệt "Tạo bộ mới", không phải 1 bộ thẻ thật
+  const newOption = document.createElement("option");
+  newOption.value = NEW_DECK_OPTION_VALUE;
+  newOption.textContent = "➕ Tạo bộ mới";
+  deckSelectEl.appendChild(newOption);
+
   appState.decks.forEach((deck) => {
     const option = document.createElement("option");
     option.value = deck.id;
@@ -343,23 +357,8 @@ function renderDeckSelect() {
   });
 }
 
-// Chuyển sang bộ thẻ khác khi chọn trong dropdown
-deckSelectEl.addEventListener("change", (event) => {
-  closeCardDeletePopover();
-  closeDeckDeletePopover();
-
-  appState.activeDeckId = event.target.value;
-  cards = getActiveDeck().cards;
-  currentIndex = 0;
-  isFlipped = false;
-
-  saveAppState(appState);
-  renderCard();
-  speakCurrentWord();
-});
-
 // Tạo bộ thẻ mới (rỗng), rồi chuyển sang bộ đó luôn
-newDeckBtn.addEventListener("click", () => {
+function createNewDeck() {
   const name = prompt("Nhập tên bộ thẻ mới:");
   if (!name || !name.trim()) return; // người dùng bấm Cancel hoặc để trống tên
 
@@ -371,8 +370,29 @@ newDeckBtn.addEventListener("click", () => {
   isFlipped = false;
 
   saveAppState(appState);
-  renderDeckSelect();
   renderCard();
+}
+
+// Chuyển sang bộ thẻ khác khi chọn trong dropdown (hoặc mở form tạo bộ mới
+// nếu chọn đúng dòng "➕ Tạo bộ mới" - dòng đó không phải 1 bộ thẻ thật)
+deckSelectEl.addEventListener("change", (event) => {
+  if (event.target.value === NEW_DECK_OPTION_VALUE) {
+    createNewDeck();
+    renderDeckSelect(); // vẽ lại để dropdown tự chọn về đúng bộ đang active (dù tạo mới hay bấm Cancel)
+    return;
+  }
+
+  closeCardDeletePopover();
+  closeDeckDeletePopover();
+
+  appState.activeDeckId = event.target.value;
+  cards = getActiveDeck().cards;
+  currentIndex = 0;
+  isFlipped = false;
+
+  saveAppState(appState);
+  renderCard();
+  speakCurrentWord();
 });
 
 // Xóa bộ thẻ đang chọn (có xác nhận trước khi xóa) - nút này nằm trong popover,
@@ -731,6 +751,59 @@ excelFileInput.addEventListener("change", (event) => {
   reader.readAsArrayBuffer(file);
   event.target.value = ""; // cho phép chọn lại đúng file này lần nữa nếu cần
 });
+
+// ------------------------------------------------------------
+// Tooltip cho nút "Tải file Excel"
+//
+// Trên máy tính: tooltip hiện/ẩn hoàn toàn bằng CSS (:hover), không cần JS.
+//
+// Trên thiết bị cảm ứng không có "di chuột", nên tooltip được thiết kế hiện
+// ra khi CHẠM GIỮ (long press) vào nút, dùng chung ngưỡng thời gian
+// LONG_PRESS_MS như các cử chỉ nhấn giữ khác trong app (thẻ, dropdown bộ thẻ)
+// để nhất quán. Chạm nhanh (thả tay trước LONG_PRESS_MS) thì không hiện
+// tooltip và hộp thoại chọn file vẫn mở bình thường như một cú chạm thường.
+// Nếu đã hiện tooltip do giữ lâu, việc thả tay ra sẽ KHÔNG mở hộp thoại chọn
+// file nữa (chặn bằng preventDefault) - vì lúc đó người dùng chỉ đang muốn
+// đọc chú thích, không phải đang cố bấm nút.
+// ------------------------------------------------------------
+
+let uploadTooltipTimer = null;
+let uploadTooltipTriggered = false;
+
+uploadTooltipWrap.addEventListener(
+  "touchstart",
+  () => {
+    uploadTooltipTriggered = false;
+    uploadTooltipTimer = setTimeout(() => {
+      uploadTooltipTimer = null;
+      uploadTooltipTriggered = true;
+      uploadTooltipWrap.classList.add("show-tooltip");
+      setTimeout(() => uploadTooltipWrap.classList.remove("show-tooltip"), TOOLTIP_AUTO_HIDE_MS);
+    }, LONG_PRESS_MS);
+  },
+  { passive: true }
+);
+
+uploadTooltipWrap.addEventListener("touchend", (event) => {
+  if (uploadTooltipTimer) {
+    clearTimeout(uploadTooltipTimer);
+    uploadTooltipTimer = null;
+  }
+  if (uploadTooltipTriggered) {
+    event.preventDefault(); // đã hiện tooltip do giữ lâu -> không mở hộp thoại chọn file khi thả tay
+  }
+});
+
+// Chạm ra chỗ khác trên trang để tắt tooltip sớm hơn thời gian tự ẩn
+document.addEventListener(
+  "touchstart",
+  (event) => {
+    if (uploadTooltipWrap.classList.contains("show-tooltip") && !uploadTooltipWrap.contains(event.target)) {
+      uploadTooltipWrap.classList.remove("show-tooltip");
+    }
+  },
+  { passive: true }
+);
 
 // ============================================================
 // THÊM / SỬA / XÓA TỪNG THẺ BẰNG TAY (áp dụng cho bộ thẻ đang chọn)
