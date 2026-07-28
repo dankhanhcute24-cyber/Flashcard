@@ -7,6 +7,10 @@ const MAX_CARDS_PER_DECK = 12000; // số thẻ tối đa cho phép trong 1 bộ
 const STORAGE_LIMIT_BYTES = 5 * 1024 * 1024; // ~5MB - mức giới hạn phổ biến của localStorage trên trình duyệt
 const STORAGE_WARNING_RATIO = 0.8; // cảnh báo khi dùng hết 80% giới hạn ước tính ở trên
 
+const SWIPE_THRESHOLD = 60; // px - vuốt xa hơn mức này mới tính là "chuyển thẻ"
+const TAP_THRESHOLD = 8; // px - xê dịch dưới mức này vẫn coi là "bấm" (lật thẻ), không phải vuốt
+const SWIPE_ANIMATION_MS = 250; // thời gian (ms) cho hiệu ứng thẻ trượt ra/vào - phải khớp giữa CSS và setTimeout
+
 // ============================================================
 // DỮ LIỆU MẶC ĐỊNH (dùng khi mở app lần đầu, chưa có gì trong localStorage)
 // ============================================================
@@ -182,6 +186,11 @@ let appState = loadAppState();
 let cards = getActiveDeck().cards; // luôn trỏ tới mảng thẻ của bộ thẻ đang chọn
 let currentIndex = 0;
 let isFlipped = false;
+
+// Trạng thái theo dõi cử chỉ kéo/vuốt trên thẻ
+let isDragging = false;
+let dragStartX = 0;
+let dragCurrentX = 0;
 
 // null = đang thêm thẻ mới, số = đang sửa thẻ ở vị trí đó trong mảng "cards"
 let editingCardIndex = null;
@@ -360,32 +369,128 @@ deleteDeckBtn.addEventListener("click", () => {
 // TƯƠNG TÁC VỚI THẺ (lật thẻ, chuyển thẻ)
 // ============================================================
 
-// Lật thẻ khi bấm vào
-cardEl.addEventListener("click", () => {
-  isFlipped = !isFlipped;
-  renderCard();
-});
-
-// Chuyển sang thẻ tiếp theo
-nextBtn.addEventListener("click", () => {
+// Chuyển sang thẻ tiếp theo - dùng chung cho nút "Tiếp theo" VÀ vuốt sang trái
+function goToNextCard() {
   if (cards.length === 0) return;
   currentIndex = (currentIndex + 1) % cards.length;
   isFlipped = false;
   renderCard();
   speakCurrentWord();
-});
+}
 
-// Quay lại thẻ trước đó
-prevBtn.addEventListener("click", () => {
+// Quay lại thẻ trước đó - dùng chung cho nút "Trước đó" VÀ vuốt sang phải
+function goToPrevCard() {
   if (cards.length === 0) return;
   currentIndex = (currentIndex - 1 + cards.length) % cards.length;
   isFlipped = false;
   renderCard();
   speakCurrentWord();
-});
+}
+
+nextBtn.addEventListener("click", goToNextCard);
+prevBtn.addEventListener("click", goToPrevCard);
 
 // Đọc lại từ hiện tại theo yêu cầu
 speakBtn.addEventListener("click", speakCurrentWord);
+
+// ------------------------------------------------------------
+// Vuốt/kéo trên thẻ để chuyển thẻ (hỗ trợ cả cảm ứng và chuột)
+//
+// Cách phân biệt "bấm để lật" và "vuốt để chuyển thẻ":
+// Cả 2 đều bắt đầu bằng pointerdown và kết thúc bằng pointerup, chỉ khác
+// nhau ở QUÃNG ĐƯỜNG con trỏ di chuyển giữa 2 thời điểm đó:
+//   - Di chuyển rất ít (< TAP_THRESHOLD)   -> coi là 1 cú "bấm" -> lật thẻ
+//   - Di chuyển đủ xa (>= SWIPE_THRESHOLD) -> coi là "vuốt"     -> chuyển thẻ
+//   - Ở khoảng giữa (có kéo nhưng chưa đủ xa) -> không tính, thẻ tự trượt về chỗ cũ
+// ------------------------------------------------------------
+
+// Xóa transform/transition đã gán bằng JS, trả quyền điều khiển giao diện
+// lại cho CSS (để hiệu ứng hover phóng to thẻ ở trạng thái nghỉ vẫn hoạt động)
+function clearCardTransform() {
+  cardEl.style.transition = "";
+  cardEl.style.transform = "";
+}
+
+// Cho thẻ hiện tại trượt hẳn ra khỏi màn hình, đổi sang thẻ kế/trước,
+// rồi cho thẻ mới trượt vào từ phía đối diện
+function animateSwipeChange(goingNext) {
+  const flyDistance = goingNext ? -520 : 520;
+  cardEl.style.transform = `translateX(${flyDistance}px) rotate(${flyDistance / 24}deg)`;
+
+  setTimeout(() => {
+    if (goingNext) {
+      goToNextCard();
+    } else {
+      goToPrevCard();
+    }
+
+    // Đặt thẻ (đã có nội dung mới) sang phía đối diện mà không có hiệu ứng, để chuẩn bị trượt vào
+    cardEl.style.transition = "none";
+    cardEl.style.transform = `translateX(${-flyDistance}px)`;
+
+    // Ép trình duyệt áp dụng vị trí trên ngay lập tức trước khi bật lại transition bên dưới,
+    // nếu không trình duyệt có thể gộp 2 thay đổi lại và bỏ qua hiệu ứng trượt vào
+    void cardEl.offsetWidth;
+
+    cardEl.style.transition = `transform ${SWIPE_ANIMATION_MS}ms ease`;
+    cardEl.style.transform = "translateX(0)";
+
+    setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+  }, SWIPE_ANIMATION_MS);
+}
+
+cardEl.addEventListener("pointerdown", (event) => {
+  if (cards.length === 0) return;
+
+  isDragging = true;
+  dragStartX = event.clientX;
+  dragCurrentX = 0;
+
+  cardEl.setPointerCapture(event.pointerId); // giữ nhận sự kiện dù con trỏ đi ra ngoài phạm vi thẻ
+  cardEl.style.transition = "none"; // tắt hiệu ứng mượt trong lúc đang kéo để thẻ bám sát ngón tay/chuột
+});
+
+cardEl.addEventListener("pointermove", (event) => {
+  if (!isDragging) return;
+  dragCurrentX = event.clientX - dragStartX;
+  cardEl.style.transform = `translateX(${dragCurrentX}px) rotate(${dragCurrentX / 24}deg)`;
+});
+
+cardEl.addEventListener("pointerup", (event) => {
+  if (!isDragging) return;
+  isDragging = false;
+  cardEl.releasePointerCapture(event.pointerId);
+
+  const distance = Math.abs(dragCurrentX);
+  const draggedX = dragCurrentX;
+  dragCurrentX = 0;
+
+  cardEl.style.transition = `transform ${SWIPE_ANIMATION_MS}ms ease`;
+
+  if (distance < TAP_THRESHOLD) {
+    // Gần như không di chuyển -> tính là 1 cú bấm -> lật thẻ
+    cardEl.style.transform = "translateX(0)";
+    setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+    isFlipped = !isFlipped;
+    renderCard();
+  } else if (distance >= SWIPE_THRESHOLD) {
+    // Vuốt đủ xa -> chuyển thẻ theo đúng hướng vừa vuốt
+    animateSwipeChange(draggedX < 0);
+  } else {
+    // Vuốt chưa đủ xa -> thẻ tự trượt về vị trí cũ, không đổi thẻ
+    cardEl.style.transform = "translateX(0)";
+    setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+  }
+});
+
+// Cử chỉ bị hủy giữa chừng (ví dụ có thông báo hệ thống hiện lên) -> đưa thẻ về vị trí cũ an toàn
+cardEl.addEventListener("pointercancel", () => {
+  isDragging = false;
+  dragCurrentX = 0;
+  cardEl.style.transition = `transform ${SWIPE_ANIMATION_MS}ms ease`;
+  cardEl.style.transform = "translateX(0)";
+  setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+});
 
 // ============================================================
 // NHẬP DỮ LIỆU TỪ FILE EXCEL (vào bộ thẻ đang được chọn)

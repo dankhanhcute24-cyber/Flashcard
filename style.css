@@ -5,6 +5,7 @@ body {
   text-align: center;
   margin: 0;
   padding: 40px 20px;
+  overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
 h1 {
@@ -125,6 +126,7 @@ h1 {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   user-select: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  touch-action: pan-y; /* để trình duyệt giao cử chỉ vuốt ngang cho JS xử lý, không tự cuộn trang */
 }
 
 .card:hover {
