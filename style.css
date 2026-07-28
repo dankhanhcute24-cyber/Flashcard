@@ -8,14 +8,19 @@ body {
   overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
-/* Trên điện thoại và iPad (dưới 1024px - ranh giới quen dùng cho iPad ngang),
-   căn giữa toàn bộ nội dung theo chiều dọc màn hình thay vì dồn lên trên,
-   vì nội dung thường thấp hơn chiều cao màn hình trên các thiết bị này.
-   Không áp dụng cho máy tính (từ 1024px) - bố cục ở đó giữ nguyên như cũ.
-   Dùng 100dvh (dynamic viewport height) thay vì 100vh để tính đúng chiều
-   cao khả dụng thật sự trên di động, không bị thanh địa chỉ trình duyệt
-   che khuất/gây giật; trình duyệt cũ không hỗ trợ dvh sẽ tự dùng vh ở trên. */
-@media (max-width: 1023px) {
+/* Căn giữa nội dung theo chiều dọc trên ĐIỆN THOẠI VÀ IPAD.
+   Trước đây dùng "max-width: 1023px" để nhận diện, nhưng cách đó không đáng
+   tin cậy: iPad Pro 12.9" ở chế độ DỌC đã rộng đúng 1024px (vượt luôn mốc
+   1023px), còn iPad ở chế độ NGANG có thể rộng tới 1080-1366px - trùng hẳn
+   độ rộng của nhiều laptop thật, nên chỉ dựa vào độ rộng màn hình không thể
+   phân biệt chính xác "iPad" và "laptop" trong mọi trường hợp.
+   Thay vào đó, dùng (hover: none) and (pointer: coarse) - nhận diện thiết bị
+   có con trỏ chính là NGÓN TAY (không có chuột/trackpad để "hover"). Cách này
+   luôn đúng cho điện thoại và iPad ở MỌI kích thước, MỌI chiều xoay, và luôn
+   loại trừ đúng laptop/desktop (dùng chuột/trackpad) dù độ rộng màn hình có
+   trùng nhau đi nữa. (Trường hợp hiếm: laptop cảm ứng đang tắt/tháo rời bàn
+   phím-chuột cũng sẽ được tính như thiết bị cảm ứng - chấp nhận được.) */
+@media (hover: none) and (pointer: coarse) {
   body {
     display: flex;
     flex-direction: column;
