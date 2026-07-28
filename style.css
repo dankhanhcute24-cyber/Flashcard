@@ -112,9 +112,14 @@ h1 {
   line-height: 1.4;
 }
 
+/* Kích thước thẻ mặc định = tối ưu cho ĐIỆN THOẠI (thiết kế "mobile-first").
+   Dùng % (theo chiều rộng của phần tử cha, đã trừ sẵn padding) thay vì vw,
+   để chắc chắn thẻ không bao giờ tràn ra ngoài màn hình dù điện thoại nhỏ đến đâu.
+   min-height được đặt gần bằng width để thẻ có dáng vuông thay vì dẹt như trước. */
 .card {
-  width: 360px;
-  min-height: 200px;
+  width: 92%;
+  max-width: 420px;
+  min-height: 380px;
   margin: 0 auto;
   background-color: #ffffff;
   border: 2px solid #1565C0;
@@ -125,7 +130,7 @@ h1 {
   cursor: pointer;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   user-select: none;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, width 0.2s ease, min-height 0.2s ease;
   touch-action: pan-y; /* để trình duyệt giao cử chỉ vuốt ngang cho JS xử lý, không tự cuộn trang */
 }
 
@@ -144,7 +149,7 @@ h1 {
 
 .hanzi {
   font-family: 'Noto Sans SC', sans-serif;
-  font-size: 48px;
+  font-size: 58px;
   font-weight: 700;
   color: #1a1a1a; /* đen */
   margin: 0;
@@ -152,7 +157,7 @@ h1 {
 
 .pinyin {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 500;
   margin: 8px 0 0 0;
 }
@@ -164,7 +169,7 @@ h1 {
 
 .meaning {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 600;
   color: #2E7D32; /* xanh lá */
   margin: 0;
@@ -179,21 +184,21 @@ h1 {
 
 .example-hanzi {
   font-family: 'Noto Sans SC', sans-serif;
-  font-size: 20px;
+  font-size: 24px;
   color: #1a1a1a; /* giống màu chữ Hán chính, chỉ nhỏ hơn */
   margin: 0;
 }
 
 .example-pinyin {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   margin: 4px 0 0 0;
 }
 
 .example-meaning {
   font-family: 'Be Vietnam Pro', sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   font-style: italic;
   color: #555555;
   margin: 4px 0 0 0;
@@ -207,7 +212,7 @@ h1 {
 .tone-neutral { color: #757575; } /* Thanh nhẹ - xám */
 
 .empty-state {
-  font-size: 16px;
+  font-size: 18px;
   color: #777;
   line-height: 1.6;
 }
@@ -346,4 +351,59 @@ button:hover {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+/* ============================================================
+   RESPONSIVE - kích thước thẻ theo từng loại thiết bị
+   Style gốc ở trên (không có media query) = dành cho ĐIỆN THOẠI.
+   Khối bên dưới ghi đè kích thước/cỡ chữ cho màn hình rộng hơn.
+
+   Mốc (breakpoint) đang dùng:
+   - Dưới 600px      -> Điện thoại (dùng style gốc ở trên)
+   - Từ 600px trở lên -> Máy tính bảng / iPad VÀ máy tính (laptop/desktop)
+     dùng chung 1 kích thước = 1.5 lần kích thước gốc ban đầu (360x200px)
+
+   Ranh giới 600px vẫn giữ nguyên như trước (điện thoại dựng đứng hầu
+   như luôn dưới 600px chiều ngang). Máy tính bảng và máy tính giờ dùng
+   chung 1 kích thước nên gộp lại 1 khối @media cho gọn - nếu sau này
+   muốn tách riêng 2 mức lớn nhỏ khác nhau, thêm lại
+   "@media (min-width: 1024px) { ... }" cho phần máy tính là được. */
+
+/* Máy tính bảng / iPad + Máy tính (laptop/desktop) - kích thước 1.5x */
+@media (min-width: 600px) {
+  .card {
+    width: 540px;
+    max-width: 92%;
+    min-height: 300px;
+  }
+
+  .hanzi {
+    font-size: 100px;
+  }
+
+  .pinyin {
+    font-size: 38px;
+  }
+
+  .meaning {
+    font-size: 56px;
+  }
+
+  .example {
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+  .example-hanzi {
+    font-size: 38px;
+  }
+
+  .example-pinyin,
+  .example-meaning {
+    font-size: 24px;
+  }
+
+  .empty-state {
+    font-size: 24px;
+  }
 }
