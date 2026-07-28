@@ -132,6 +132,11 @@ function saveAppState(state) {
     alert("Không thể lưu dữ liệu: bộ nhớ trình duyệt đã đầy. Hãy xóa bớt bộ thẻ không cần thiết rồi thử lại.");
   }
   updateStorageWarning(state);
+
+  // Nếu đã đăng nhập, đẩy luôn thay đổi này lên Firestore để đồng bộ sang
+  // các thiết bị khác. Nếu chưa đăng nhập, hàm này tự bỏ qua (no-op) -
+  // app vẫn hoạt động 100% bằng localStorage như trước, không bắt buộc đăng nhập.
+  writeStateToCloud(state);
 }
 
 function getActiveDeck() {
@@ -175,6 +180,13 @@ const deleteDeckBtn = document.getElementById("deleteDeckBtn");
 const deckDeletePopover = document.getElementById("deckDeletePopover");
 const storageWarningEl = document.getElementById("storageWarning");
 
+const loginBtn = document.getElementById("loginBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const authUserEl = document.getElementById("authUser");
+const authAvatarEl = document.getElementById("authAvatar");
+const authNameEl = document.getElementById("authName");
+const syncStatusEl = document.getElementById("syncStatus");
+
 const addCardBtn = document.getElementById("addCardBtn");
 const editCardBtn = document.getElementById("editCardBtn");
 const deleteCardBtn = document.getElementById("deleteCardBtn");
@@ -190,6 +202,29 @@ const formMeaningEl = document.getElementById("formMeaning");
 const formExampleHanziEl = document.getElementById("formExampleHanzi");
 const formExamplePinyinEl = document.getElementById("formExamplePinyin");
 const formExampleMeaningEl = document.getElementById("formExampleMeaning");
+
+// ============================================================
+// TRẠNG THÁI ĐỒNG BỘ FIREBASE (khai báo SỚM, trước loadAppState() bên dưới)
+//
+// saveAppState() (định nghĩa ở trên) gọi writeStateToCloud() - hàm đó đọc
+// các biến "firebaseReady/currentUser/..." này. loadAppState() có thể gọi
+// saveAppState() NGAY TỪ NHỮNG DÒNG ĐẦU TIÊN của app (khi chưa có gì trong
+// localStorage), tức là trước khi trình duyệt kịp chạy tới phần khai báo ở
+// cuối file - nên các biến `let` này BẮT BUỘC phải khai báo ở đây (trước khi
+// gọi loadAppState() phía dưới), nếu không sẽ bị lỗi "Cannot access before
+// initialization" (JavaScript "temporal dead zone" của let/const).
+// Toàn bộ logic gán giá trị/xử lý các biến này nằm ở phần
+// "ĐĂNG NHẬP GOOGLE & ĐỒNG BỘ DỮ LIỆU QUA FIREBASE" cuối file.
+// ============================================================
+
+let firebaseAuth = null;
+let firebaseDb = null;
+let firestoreFns = null;
+let firestoreDocRef = null;
+let currentUser = null;
+let unsubscribeSnapshot = null;
+let firebaseReady = false;
+let lastWriteId = null;
 
 // ============================================================
 // TRẠNG THÁI CHÍNH CỦA APP
@@ -1027,9 +1062,236 @@ deleteCardBtn.addEventListener("click", () => {
 });
 
 // ============================================================
+// ĐĂNG NHẬP GOOGLE & ĐỒNG BỘ DỮ LIỆU QUA FIREBASE (không bắt buộc)
+//
+// Toàn bộ phần này CHỈ chạy thêm bên cạnh cơ chế localStorage có sẵn ở trên,
+// không thay thế nó:
+//   - Chưa đăng nhập  -> app hoạt động y hệt như trước (chỉ lưu localStorage).
+//   - Đã đăng nhập    -> mỗi lần saveAppState() được gọi (thêm/sửa/xóa thẻ,
+//     đổi bộ thẻ, tải Excel...) dữ liệu vẫn lưu localStorage NHƯ CŨ, đồng
+//     thời được ghi thêm lên Firestore (writeStateToCloud - gọi ở cuối
+//     saveAppState() phía trên). Khi mở app trên thiết bị khác và đăng nhập
+//     cùng tài khoản Google, dữ liệu trên Firestore được tải về và thay thế
+//     dữ liệu cục bộ (xem applyRemoteState).
+//
+// Dùng dynamic import() (thay vì thẻ <script type="module">) để tải SDK
+// Firebase ngay bên trong file script.js bình thường này - nhờ vậy mọi biến
+// (appState, cards, currentIndex...) vẫn dùng chung, không cần "lộ" chúng ra
+// window hay tách file riêng.
+// ============================================================
+
+// Cấu hình dự án Firebase - lấy từ Firebase Console > Project settings.
+// Đây không phải bí mật cần giấu (apiKey của Firebase Web SDK được thiết kế
+// để lộ công khai trong code phía trình duyệt) - thứ thực sự bảo vệ dữ liệu
+// là Firestore Security Rules (đã cấu hình ở Firebase Console, xem hướng dẫn
+// đi kèm) chứ không phải việc giấu config này.
+const firebaseConfig = {
+  apiKey: "AIzaSyBQxTkKlQhN2N6QRLVfaT0ZdRgsSPeox9o",
+  authDomain: "flashcard-tieng-trung-cc9ef.firebaseapp.com",
+  projectId: "flashcard-tieng-trung-cc9ef",
+  storageBucket: "flashcard-tieng-trung-cc9ef.firebasestorage.app",
+  messagingSenderId: "832859185811",
+  appId: "1:832859185811:web:c689013d76e0030ff86366"
+};
+
+const FIREBASE_SDK_VERSION = "10.12.2";
+
+// (Các biến firebaseAuth/firebaseDb/firestoreFns/firestoreDocRef/currentUser/
+// unsubscribeSnapshot/firebaseReady/lastWriteId đã được khai báo sớm hơn ở
+// phần "TRẠNG THÁI ĐỒNG BỘ FIREBASE" phía trên, ngay trước loadAppState())
+
+let syncStatusHideTimer = null;
+function showSyncStatus(text) {
+  syncStatusEl.textContent = text;
+  syncStatusEl.hidden = false;
+  if (syncStatusHideTimer) clearTimeout(syncStatusHideTimer);
+  syncStatusHideTimer = setTimeout(() => {
+    syncStatusEl.hidden = true;
+  }, 2500);
+}
+
+// Ghi state hiện tại lên Firestore (bỏ qua nếu chưa đăng nhập/Firebase chưa sẵn sàng)
+function writeStateToCloud(state) {
+  if (!firebaseReady || !currentUser || !firestoreDocRef || !firestoreFns) return;
+
+  const syncId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  lastWriteId = syncId;
+
+  const { setDoc } = firestoreFns;
+  showSyncStatus("⏳ Đang đồng bộ...");
+  setDoc(firestoreDocRef, {
+    activeDeckId: state.activeDeckId,
+    decks: state.decks,
+    _syncId: syncId
+  })
+    .then(() => showSyncStatus("☁️ Đã đồng bộ"))
+    .catch((error) => {
+      console.warn("Lỗi đồng bộ lên Firestore:", error);
+      showSyncStatus("⚠️ Chưa đồng bộ được lên đám mây");
+    });
+}
+
+// Áp dụng dữ liệu tải từ Firestore vào app (khi vừa đăng nhập, hoặc khi một
+// thiết bị khác vừa thay đổi dữ liệu). Không gọi speakCurrentWord() ở đây vì
+// việc dữ liệu bất chợt cập nhật (do thiết bị khác) không nên tự phát âm thanh.
+function applyRemoteState(data) {
+  appState = {
+    activeDeckId: data.activeDeckId,
+    decks: Array.isArray(data.decks) ? data.decks : []
+  };
+
+  if (!getActiveDeck() && appState.decks.length > 0) {
+    appState.activeDeckId = appState.decks[0].id;
+  }
+
+  cards = getActiveDeck() ? getActiveDeck().cards : [];
+  currentIndex = 0;
+  isFlipped = false;
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+  } catch (error) {
+    // Bỏ qua - dữ liệu vẫn còn nguyên trên Firestore, không mất gì
+  }
+  updateStorageWarning(appState);
+
+  renderDeckSelect();
+  renderCard();
+}
+
+// Chạy khi trạng thái đăng nhập thay đổi (đăng nhập, đăng xuất, hoặc lúc
+// Firebase tự khôi phục phiên đăng nhập cũ khi mở lại app)
+async function handleAuthChange(user) {
+  currentUser = user;
+
+  if (unsubscribeSnapshot) {
+    unsubscribeSnapshot();
+    unsubscribeSnapshot = null;
+  }
+
+  if (!user) {
+    loginBtn.hidden = false;
+    authUserEl.hidden = true;
+    syncStatusEl.hidden = true;
+    firestoreDocRef = null;
+    return;
+  }
+
+  loginBtn.hidden = true;
+  authUserEl.hidden = false;
+  authAvatarEl.src = user.photoURL || "";
+  authNameEl.textContent = user.displayName || user.email || "";
+
+  const { doc, getDoc, onSnapshot } = firestoreFns;
+  firestoreDocRef = doc(firebaseDb, "users", user.uid);
+
+  showSyncStatus("⏳ Đang tải dữ liệu...");
+
+  try {
+    const snap = await getDoc(firestoreDocRef);
+    const data = snap.exists() ? snap.data() : null;
+
+    if (data && Array.isArray(data.decks) && data.decks.length > 0) {
+      // Tài khoản này đã có dữ liệu trên đám mây (ví dụ đã đăng nhập từ máy
+      // khác trước đó) -> tải về, thay thế dữ liệu đang có trên máy này
+      applyRemoteState(data);
+    } else {
+      // Lần đầu đăng nhập bằng tài khoản này, đám mây chưa có gì -> đẩy dữ
+      // liệu hiện có trên máy này (kể cả bộ thẻ mẫu) lên làm dữ liệu gốc
+      writeStateToCloud(appState);
+    }
+    showSyncStatus("☁️ Đã đồng bộ");
+  } catch (error) {
+    console.warn("Lỗi tải dữ liệu từ Firestore:", error);
+    showSyncStatus("⚠️ Không tải được dữ liệu đám mây - đang dùng dữ liệu trên máy");
+  }
+
+  // Lắng nghe thay đổi xảy ra trên CÁC THIẾT BỊ KHÁC (đăng nhập cùng tài
+  // khoản) để tự động cập nhật ngay cả khi app đang mở sẵn ở đây
+  unsubscribeSnapshot = onSnapshot(
+    firestoreDocRef,
+    (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+
+      // _syncId trùng với lần ghi gần nhất của CHÍNH máy này -> đây chỉ là
+      // xác nhận (ack) của thao tác vừa lưu, không phải thay đổi từ nơi
+      // khác -> bỏ qua để tránh tự reset về thẻ đầu tiên khi đang xem dở
+      if (data._syncId && data._syncId === lastWriteId) return;
+      if (snap.metadata.hasPendingWrites) return;
+
+      applyRemoteState(data);
+    },
+    (error) => {
+      console.warn("Mất kết nối đồng bộ Firestore:", error);
+    }
+  );
+}
+
+// Tải SDK Firebase (dùng dynamic import nên không cần thêm <script> nào
+// trong index.html) và gắn các sự kiện đăng nhập/đăng xuất. Nếu có lỗi (ví
+// dụ đang mở file trực tiếp bằng file:// thay vì qua server, hoặc mất mạng),
+// app vẫn dùng được bình thường với localStorage - chỉ tính năng đồng bộ bị tắt.
+async function initFirebase() {
+  try {
+    const { initializeApp } = await import(
+      `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`
+    );
+    const authModule = await import(
+      `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`
+    );
+    const firestoreModule = await import(
+      `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-firestore.js`
+    );
+
+    const app = initializeApp(firebaseConfig);
+    firebaseAuth = authModule.getAuth(app);
+    firebaseDb = firestoreModule.getFirestore(app);
+    firestoreFns = firestoreModule;
+    firebaseReady = true;
+
+    authModule.onAuthStateChanged(firebaseAuth, handleAuthChange);
+
+    loginBtn.addEventListener("click", () => {
+      const provider = new authModule.GoogleAuthProvider();
+      authModule.signInWithPopup(firebaseAuth, provider).catch((error) => {
+        if (
+          error.code === "auth/popup-blocked" ||
+          error.code === "auth/operation-not-supported-in-this-environment"
+        ) {
+          // Trình duyệt (thường gặp trên điện thoại) chặn popup -> chuyển
+          // sang cách đăng nhập bằng chuyển hướng trang (redirect)
+          authModule.signInWithRedirect(firebaseAuth, provider);
+        } else if (
+          error.code !== "auth/cancelled-popup-request" &&
+          error.code !== "auth/popup-closed-by-user"
+        ) {
+          alert("Đăng nhập thất bại: " + error.message);
+        }
+      });
+    });
+
+    logoutBtn.addEventListener("click", () => {
+      authModule.signOut(firebaseAuth);
+    });
+
+    // Xử lý kết quả của luồng đăng nhập bằng redirect ở trên (nếu có) -
+    // onAuthStateChanged phía trên sẽ tự nhận được user sau bước này
+    try {
+      await authModule.getRedirectResult(firebaseAuth);
+    } catch (error) {
+      console.warn("Không lấy được kết quả đăng nhập redirect:", error);
+    }
+  } catch (error) {
+    console.warn("Không khởi tạo được Firebase - app vẫn hoạt động bình thường với localStorage.", error);
+  }
+}
+
+// ============================================================
 // KHỞI TẠO KHI TẢI TRANG
 // ============================================================
 
 renderDeckSelect();
 renderCard();
 speakCurrentWord();
+initFirebase();

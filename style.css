@@ -8,29 +8,6 @@ body {
   overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
-/* Căn giữa nội dung theo chiều dọc trên ĐIỆN THOẠI VÀ IPAD.
-   Trước đây dùng "max-width: 1023px" để nhận diện, nhưng cách đó không đáng
-   tin cậy: iPad Pro 12.9" ở chế độ DỌC đã rộng đúng 1024px (vượt luôn mốc
-   1023px), còn iPad ở chế độ NGANG có thể rộng tới 1080-1366px - trùng hẳn
-   độ rộng của nhiều laptop thật, nên chỉ dựa vào độ rộng màn hình không thể
-   phân biệt chính xác "iPad" và "laptop" trong mọi trường hợp.
-   Thay vào đó, dùng (hover: none) and (pointer: coarse) - nhận diện thiết bị
-   có con trỏ chính là NGÓN TAY (không có chuột/trackpad để "hover"). Cách này
-   luôn đúng cho điện thoại và iPad ở MỌI kích thước, MỌI chiều xoay, và luôn
-   loại trừ đúng laptop/desktop (dùng chuột/trackpad) dù độ rộng màn hình có
-   trùng nhau đi nữa. (Trường hợp hiếm: laptop cảm ứng đang tắt/tháo rời bàn
-   phím-chuột cũng sẽ được tính như thiết bị cảm ứng - chấp nhận được.) */
-@media (hover: none) and (pointer: coarse) {
-  body {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    min-height: 100dvh;
-  }
-}
-
 /* Thanh công cụ dưới thẻ - luôn nằm gọn trên 1 hàng ngang (flex-wrap: nowrap).
    Đã tính toán kích thước để vừa khít kể cả trên điện thoại hẹp nhất (xem
    .btn-label), nên KHÔNG dùng overflow-x: auto ở đây nữa - theo đặc tả CSS,
@@ -202,6 +179,65 @@ body {
 
 .card-delete-popover .delete-popover-btn:hover {
   background-color: #B71C1C;
+}
+
+/* Khu vực đăng nhập Google - cố định góc trên bên phải, KHÔNG nằm trong
+   luồng bố cục thường (position: fixed) nên không ảnh hưởng tới việc căn
+   giữa dọc trên điện thoại/iPad hay layout của toolbar/thẻ chính. */
+.auth-bar {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* "display: flex" ở trên sẽ đè mất thuộc tính HTML "hidden" (vốn dựa vào
+   display:none mặc định của trình duyệt) nên phải khai báo lại tường minh
+   ở đây - nếu không, khối avatar/đăng xuất sẽ LUÔN hiện kể cả khi chưa đăng nhập */
+.auth-user[hidden] {
+  display: none;
+}
+
+.auth-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: block;
+  border: 1px solid #C7C7C7;
+}
+
+.auth-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #444444;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Thông báo trạng thái đồng bộ ("Đang đồng bộ...", "Đã đồng bộ"...) -
+   tự ẩn sau vài giây, xem showSyncStatus() trong script.js */
+.sync-status {
+  position: fixed;
+  top: 46px;
+  right: 10px;
+  z-index: 49;
+  font-size: 11px;
+  color: #888888;
+  background-color: #ffffff;
+  border: 1px solid #E0E0E0;
+  padding: 3px 8px;
+  border-radius: 10px;
 }
 
 .storage-warning {

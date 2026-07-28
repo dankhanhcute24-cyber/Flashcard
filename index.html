@@ -14,6 +14,22 @@
 </head>
 <body>
 
+  <!-- Khu vực đăng nhập Google / đồng bộ - đặt cố định ở góc trên bên phải,
+       tách biệt hoàn toàn khỏi toolbar và thẻ chính nên không ảnh hưởng tới
+       giao diện/layout hiện có. Đăng nhập KHÔNG bắt buộc - không đăng nhập
+       vẫn dùng app bình thường với localStorage như trước đây. -->
+  <div class="auth-bar" id="authBar">
+    <button id="loginBtn" class="deck-btn" title="Đăng nhập bằng Google để đồng bộ dữ liệu giữa các thiết bị">
+      🔑<span class="btn-label"> Đăng nhập</span>
+    </button>
+    <div class="auth-user" id="authUser" hidden>
+      <img id="authAvatar" class="auth-avatar" alt="Ảnh đại diện">
+      <span id="authName" class="auth-name btn-label"></span>
+      <button id="logoutBtn" class="deck-btn" title="Đăng xuất">🚪<span class="btn-label"> Đăng xuất</span></button>
+    </div>
+  </div>
+  <span id="syncStatus" class="sync-status" hidden></span>
+
   <p id="storageWarning" class="storage-warning" hidden></p>
 
   <div class="card" id="card">
