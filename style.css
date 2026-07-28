@@ -8,6 +8,21 @@ body {
   overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
+/* Chỉ ĐIỆN THOẠI (dưới 600px - cùng mốc dùng cho cỡ chữ/kích thước thẻ ở
+   phần responsive bên dưới): căn giữa nội dung theo chiều dọc màn hình,
+   vì nội dung thường thấp hơn chiều cao màn hình trên điện thoại.
+   KHÔNG áp dụng cho iPad/máy tính (từ 600px trở lên) - giữ nguyên như hiện tại. */
+@media (max-width: 599px) {
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    min-height: 100dvh; /* dynamic viewport height - tính đúng vùng hiển thị thật trên di động */
+  }
+}
+
 /* Thanh công cụ dưới thẻ - luôn nằm gọn trên 1 hàng ngang (flex-wrap: nowrap).
    Đã tính toán kích thước để vừa khít kể cả trên điện thoại hẹp nhất (xem
    .btn-label), nên KHÔNG dùng overflow-x: auto ở đây nữa - theo đặc tả CSS,
