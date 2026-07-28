@@ -410,6 +410,17 @@ excelFileInput.addEventListener("change", (event) => {
       }
 
       const activeDeck = getActiveDeck();
+
+      // Nếu bộ thẻ đang chọn đã có sẵn thẻ, hỏi xác nhận trước khi ghi đè để tránh mất dữ liệu do bấm nhầm
+      if (activeDeck.cards.length > 0) {
+        const confirmed = confirm(
+          `Bộ thẻ "${activeDeck.name}" hiện có ${activeDeck.cards.length} thẻ.\n` +
+          `Tải file này sẽ XÓA và THAY THẾ toàn bộ số thẻ đó bằng ${newCards.length} thẻ mới từ file Excel.\n` +
+          `Bạn có chắc chắn muốn tiếp tục?`
+        );
+        if (!confirmed) return;
+      }
+
       activeDeck.cards = newCards;
       cards = activeDeck.cards;
       currentIndex = 0;
