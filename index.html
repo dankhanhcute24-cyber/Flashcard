@@ -15,6 +15,15 @@
 <body>
 
   <h1>Flashcard tiếng Trung</h1>
+
+  <div class="deck-bar">
+    <select id="deckSelect" class="deck-select"></select>
+    <button id="newDeckBtn" class="deck-btn">➕ Bộ mới</button>
+    <button id="deleteDeckBtn" class="deck-btn deck-btn-danger">🗑️ Xóa bộ</button>
+  </div>
+
+  <p id="storageWarning" class="storage-warning" hidden></p>
+
   <p class="hint">Bấm vào thẻ để lật xem đáp án</p>
 
   <div class="card" id="card">
@@ -31,6 +40,17 @@
     <button id="nextBtn">Tiếp theo →</button>
   </div>
 
+  <div class="upload">
+    <label for="excelFile" class="upload-btn">📂 Tải file Excel</label>
+    <input type="file" id="excelFile" accept=".xlsx,.xls" hidden>
+    <p class="upload-hint">
+      Cột theo thứ tự: Chữ Hán | Pinyin | Nghĩa | Câu ví dụ | Pinyin câu ví dụ | Nghĩa câu ví dụ (dòng 1 là tiêu đề).
+      Dữ liệu sẽ nhập vào bộ thẻ đang chọn ở trên.
+    </p>
+  </div>
+
+  <!-- Thư viện SheetJS để đọc file Excel ngay trong trình duyệt -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
