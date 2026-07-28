@@ -18,8 +18,8 @@ h1 {
 }
 
 .card {
-  width: 320px;
-  height: 200px;
+  width: 360px;
+  min-height: 200px;
   margin: 0 auto;
   background-color: #ffffff;
   border: 2px solid #1565C0;
@@ -68,6 +68,42 @@ h1 {
   color: #2E7D32; /* xanh lá */
   margin: 0;
 }
+
+/* Khối câu ví dụ - có đường kẻ nhẹ phía trên để tách biệt với phần nghĩa */
+.example {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #E0E0E0;
+}
+
+.example-hanzi {
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 20px;
+  color: #1a1a1a; /* giống màu chữ Hán chính, chỉ nhỏ hơn */
+  margin: 0;
+}
+
+.example-pinyin {
+  font-family: 'Be Vietnam Pro', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  margin: 4px 0 0 0;
+}
+
+.example-meaning {
+  font-family: 'Be Vietnam Pro', sans-serif;
+  font-size: 14px;
+  font-style: italic;
+  color: #555555;
+  margin: 4px 0 0 0;
+}
+
+/* Tô màu từng âm tiết pinyin theo thanh điệu (dùng cho pinyin câu ví dụ) */
+.tone-1 { color: #D32F2F; } /* Thanh 1 - đỏ */
+.tone-2 { color: #F57C00; } /* Thanh 2 - cam */
+.tone-3 { color: #2E7D32; } /* Thanh 3 - xanh lá */
+.tone-4 { color: #1565C0; } /* Thanh 4 - xanh dương */
+.tone-neutral { color: #757575; } /* Thanh nhẹ - xám */
 
 .counter {
   margin-top: 16px;
