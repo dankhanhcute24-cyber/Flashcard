@@ -115,7 +115,7 @@ function saveAppState(state) {
   } catch (error) {
     alert("Không thể lưu dữ liệu: bộ nhớ trình duyệt đã đầy. Hãy xóa bớt bộ thẻ không cần thiết rồi thử lại.");
   }
-  updateStorageWarning();
+  updateStorageWarning(state);
 }
 
 function getActiveDeck() {
@@ -127,8 +127,8 @@ function generateDeckId() {
 }
 
 // Ước tính dung lượng đang dùng và hiện cảnh báo nếu gần chạm giới hạn localStorage
-function updateStorageWarning() {
-  const sizeBytes = new Blob([JSON.stringify(appState)]).size;
+function updateStorageWarning(state) {
+  const sizeBytes = new Blob([JSON.stringify(state)]).size;
   const percent = (sizeBytes / STORAGE_LIMIT_BYTES) * 100;
 
   if (percent >= STORAGE_WARNING_RATIO * 100) {
@@ -142,13 +142,10 @@ function updateStorageWarning() {
 }
 
 // ============================================================
-// TRẠNG THÁI CHÍNH CỦA APP
+// THAM CHIẾU CÁC PHẦN TỬ TRÊN TRANG
+// (phải lấy trước khi gọi loadAppState(), vì loadAppState() có thể gọi
+// updateStorageWarning() ngay bên trong, và hàm đó cần dùng storageWarningEl)
 // ============================================================
-
-let appState = loadAppState();
-let cards = getActiveDeck().cards; // luôn trỏ tới mảng thẻ của bộ thẻ đang chọn
-let currentIndex = 0;
-let isFlipped = false;
 
 const cardEl = document.getElementById("card");
 const cardContentEl = document.getElementById("cardContent");
@@ -161,6 +158,33 @@ const deckSelectEl = document.getElementById("deckSelect");
 const newDeckBtn = document.getElementById("newDeckBtn");
 const deleteDeckBtn = document.getElementById("deleteDeckBtn");
 const storageWarningEl = document.getElementById("storageWarning");
+
+const addCardBtn = document.getElementById("addCardBtn");
+const editCardBtn = document.getElementById("editCardBtn");
+const deleteCardBtn = document.getElementById("deleteCardBtn");
+
+const cardFormOverlay = document.getElementById("cardFormOverlay");
+const cardForm = document.getElementById("cardForm");
+const cardFormTitleEl = document.getElementById("cardFormTitle");
+const cancelFormBtn = document.getElementById("cancelFormBtn");
+const formHanziEl = document.getElementById("formHanzi");
+const formPinyinEl = document.getElementById("formPinyin");
+const formMeaningEl = document.getElementById("formMeaning");
+const formExampleHanziEl = document.getElementById("formExampleHanzi");
+const formExamplePinyinEl = document.getElementById("formExamplePinyin");
+const formExampleMeaningEl = document.getElementById("formExampleMeaning");
+
+// ============================================================
+// TRẠNG THÁI CHÍNH CỦA APP
+// ============================================================
+
+let appState = loadAppState();
+let cards = getActiveDeck().cards; // luôn trỏ tới mảng thẻ của bộ thẻ đang chọn
+let currentIndex = 0;
+let isFlipped = false;
+
+// null = đang thêm thẻ mới, số = đang sửa thẻ ở vị trí đó trong mảng "cards"
+let editingCardIndex = null;
 
 // ============================================================
 // TÔ MÀU PINYIN THEO THANH ĐIỆU
@@ -208,8 +232,13 @@ function renderPinyinByTone(pinyin) {
 
 // Hiển thị thẻ hiện tại (mặt trước hoặc mặt sau tùy isFlipped)
 function renderCard() {
-  if (cards.length === 0) {
-    cardContentEl.innerHTML = `<p class="empty-state">Bộ thẻ này chưa có thẻ nào.<br>Hãy tải file Excel để thêm từ vựng.</p>`;
+  // Chỉ cho phép Sửa/Xóa khi bộ thẻ có ít nhất 1 thẻ đang được xem
+  const hasCards = cards.length > 0;
+  editCardBtn.disabled = !hasCards;
+  deleteCardBtn.disabled = !hasCards;
+
+  if (!hasCards) {
+    cardContentEl.innerHTML = `<p class="empty-state">Bộ thẻ này chưa có thẻ nào.<br>Bấm "➕ Thêm thẻ" hoặc tải file Excel để thêm từ vựng.</p>`;
     counterEl.textContent = "0 / 0";
     return;
   }
@@ -437,6 +466,129 @@ excelFileInput.addEventListener("change", (event) => {
 
   reader.readAsArrayBuffer(file);
   event.target.value = ""; // cho phép chọn lại đúng file này lần nữa nếu cần
+});
+
+// ============================================================
+// THÊM / SỬA / XÓA TỪNG THẺ BẰNG TAY (áp dụng cho bộ thẻ đang chọn)
+// ============================================================
+
+// Mở form ở chế độ "Thêm thẻ mới" - các ô nhập để trống
+function openAddCardForm() {
+  editingCardIndex = null;
+  cardFormTitleEl.textContent = "Thêm thẻ mới";
+  cardForm.reset();
+  cardFormOverlay.classList.add("open");
+  formHanziEl.focus();
+}
+
+// Mở form ở chế độ "Sửa thẻ" - điền sẵn thông tin của thẻ đang xem
+function openEditCardForm() {
+  if (cards.length === 0) return;
+
+  editingCardIndex = currentIndex;
+  const card = cards[currentIndex];
+
+  cardFormTitleEl.textContent = "Sửa thẻ";
+  formHanziEl.value = card.hanzi;
+  formPinyinEl.value = card.pinyin;
+  formMeaningEl.value = card.meaning;
+  formExampleHanziEl.value = card.example ? card.example.hanzi : "";
+  formExamplePinyinEl.value = card.example ? card.example.pinyin : "";
+  formExampleMeaningEl.value = card.example ? card.example.meaning : "";
+
+  cardFormOverlay.classList.add("open");
+  formHanziEl.focus();
+}
+
+function closeCardForm() {
+  cardFormOverlay.classList.remove("open");
+  cardForm.reset();
+  editingCardIndex = null;
+}
+
+addCardBtn.addEventListener("click", openAddCardForm);
+editCardBtn.addEventListener("click", openEditCardForm);
+cancelFormBtn.addEventListener("click", closeCardForm);
+
+// Bấm ra vùng nền tối bên ngoài form để đóng (không tính bấm bên trong form)
+cardFormOverlay.addEventListener("click", (event) => {
+  if (event.target === cardFormOverlay) {
+    closeCardForm();
+  }
+});
+
+// Bấm phím Esc để đóng form cho nhanh
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && cardFormOverlay.classList.contains("open")) {
+    closeCardForm();
+  }
+});
+
+// Lưu thẻ khi bấm nút "Lưu" trong form (thêm mới hoặc cập nhật thẻ đang sửa)
+cardForm.addEventListener("submit", (event) => {
+  event.preventDefault(); // chặn hành vi tải lại trang mặc định của form
+
+  const hanzi = formHanziEl.value.trim();
+  const pinyin = formPinyinEl.value.trim();
+  const meaning = formMeaningEl.value.trim();
+
+  if (!hanzi || !pinyin || !meaning) {
+    alert("Vui lòng điền đủ Chữ Hán, Pinyin và Nghĩa tiếng Việt.");
+    return;
+  }
+
+  const newCard = {
+    hanzi,
+    pinyin,
+    meaning,
+    example: {
+      hanzi: formExampleHanziEl.value.trim(),
+      pinyin: formExamplePinyinEl.value.trim(),
+      meaning: formExampleMeaningEl.value.trim()
+    }
+  };
+
+  if (editingCardIndex === null) {
+    // Đang thêm thẻ mới
+    if (cards.length >= MAX_CARDS_PER_DECK) {
+      alert(`Bộ thẻ đã đạt giới hạn ${MAX_CARDS_PER_DECK} thẻ, không thể thêm nữa.`);
+      return;
+    }
+    cards.push(newCard);
+    currentIndex = cards.length - 1; // hiện luôn thẻ vừa thêm
+  } else {
+    // Đang sửa thẻ có sẵn
+    cards[editingCardIndex] = newCard;
+    currentIndex = editingCardIndex;
+  }
+
+  isFlipped = false;
+
+  saveAppState(appState);
+  renderDeckSelect();
+  renderCard();
+  speakCurrentWord();
+  closeCardForm();
+});
+
+// Xóa thẻ đang xem khỏi bộ thẻ (có xác nhận trước khi xóa)
+deleteCardBtn.addEventListener("click", () => {
+  if (cards.length === 0) return;
+
+  const card = cards[currentIndex];
+  const confirmed = confirm(`Bạn có chắc muốn xóa thẻ "${card.hanzi}" (${card.meaning})?\nThao tác này không thể hoàn tác.`);
+  if (!confirmed) return;
+
+  cards.splice(currentIndex, 1);
+  if (currentIndex >= cards.length) {
+    currentIndex = Math.max(0, cards.length - 1);
+  }
+  isFlipped = false;
+
+  saveAppState(appState);
+  renderDeckSelect();
+  renderCard();
+  speakCurrentWord();
 });
 
 // ============================================================

@@ -40,6 +40,12 @@
     <button id="nextBtn">Tiếp theo →</button>
   </div>
 
+  <div class="deck-bar card-actions">
+    <button id="addCardBtn" class="deck-btn deck-btn-primary">➕ Thêm thẻ</button>
+    <button id="editCardBtn" class="deck-btn">✏️ Sửa thẻ</button>
+    <button id="deleteCardBtn" class="deck-btn deck-btn-danger">🗑️ Xóa thẻ</button>
+  </div>
+
   <div class="upload">
     <label for="excelFile" class="upload-btn">📂 Tải file Excel</label>
     <input type="file" id="excelFile" accept=".xlsx,.xls" hidden>
@@ -47,6 +53,39 @@
       Cột theo thứ tự: Chữ Hán | Pinyin | Nghĩa | Câu ví dụ | Pinyin câu ví dụ | Nghĩa câu ví dụ (dòng 1 là tiêu đề).
       Dữ liệu sẽ nhập vào bộ thẻ đang chọn ở trên.
     </p>
+  </div>
+
+  <!-- Form thêm/sửa thẻ - ẩn mặc định, JS sẽ hiện ra khi cần -->
+  <div class="modal-overlay" id="cardFormOverlay">
+    <div class="modal-box">
+      <h2 id="cardFormTitle">Thêm thẻ mới</h2>
+      <form id="cardForm">
+        <label for="formHanzi">Chữ Hán</label>
+        <input type="text" id="formHanzi" required>
+
+        <label for="formPinyin">Pinyin</label>
+        <input type="text" id="formPinyin" required>
+
+        <label for="formMeaning">Nghĩa tiếng Việt</label>
+        <input type="text" id="formMeaning" required>
+
+        <p class="modal-divider">Câu ví dụ (không bắt buộc)</p>
+
+        <label for="formExampleHanzi">Câu ví dụ - Chữ Hán</label>
+        <input type="text" id="formExampleHanzi">
+
+        <label for="formExamplePinyin">Pinyin câu ví dụ</label>
+        <input type="text" id="formExamplePinyin">
+
+        <label for="formExampleMeaning">Nghĩa câu ví dụ</label>
+        <input type="text" id="formExampleMeaning">
+
+        <div class="modal-buttons">
+          <button type="button" id="cancelFormBtn" class="deck-btn">Hủy</button>
+          <button type="submit" class="deck-btn deck-btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <!-- Thư viện SheetJS để đọc file Excel ngay trong trình duyệt -->
