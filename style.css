@@ -303,7 +303,8 @@ body {
 
 /* Chỉ số vị trí thẻ - đặt cố định ở góc dưới bên phải của thẻ, nhỏ và mờ
    nhạt để không làm rối nội dung chính. pointer-events: none để không cản
-   trở việc bấm/vuốt/giữ trên thẻ (nó chỉ là chữ hiển thị, không tương tác) */
+   trở việc bấm/vuốt/giữ trên thẻ (nó chỉ là chữ hiển thị, không tương tác).
+   Mặc định ẩn - chỉ hiện ở mặt sau (JS thêm class "show" khi isFlipped = true) */
 .counter {
   position: absolute;
   bottom: 8px;
@@ -313,6 +314,11 @@ body {
   letter-spacing: 0.5px;
   white-space: nowrap;
   pointer-events: none;
+  visibility: hidden;
+}
+
+.counter.show {
+  visibility: visible;
 }
 
 /* Bọc ngoài nút "Tải file Excel" để làm điểm neo định vị tooltip

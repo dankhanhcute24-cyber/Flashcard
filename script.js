@@ -268,6 +268,7 @@ function renderCard() {
   if (!hasCards) {
     cardContentEl.innerHTML = `<p class="empty-state">Bộ thẻ này chưa có thẻ nào.<br>Bấm "➕ Thêm thẻ" hoặc tải file Excel để thêm từ vựng.</p>`;
     counterEl.textContent = "0 / 0";
+    counterEl.classList.remove("show");
     return;
   }
 
@@ -296,6 +297,8 @@ function renderCard() {
     `;
   }
 
+  // Chỉ hiện chỉ số vị trí thẻ ở mặt sau (mặt đáp án), ẩn ở mặt trước
+  counterEl.classList.toggle("show", isFlipped);
   counterEl.textContent = `${currentIndex + 1} / ${cards.length}`;
   fitCardText();
 }
