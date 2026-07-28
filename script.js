@@ -848,7 +848,12 @@ function lookupHanziPinyin(text) {
     for (let len = maxLen; len >= 1; len--) {
       const chunk = chars.slice(i, i + len).join("");
       if (CEDICT_PINYIN[chunk]) {
-        tokens.push(CEDICT_PINYIN[chunk]);
+        // CC-CEDICT luôn ghi mỗi âm tiết cách nhau bằng dấu cách, kể cả khi
+        // cả cụm là 1 từ ghép (vd "我们" lưu là "wǒ men") - phải xóa dấu cách
+        // bên trong ở đây thì các âm tiết của CÙNG 1 từ mới dính liền nhau
+        // ("wǒmen"), còn dấu cách GIỮA các từ khác nhau vẫn do tokens.join(" ")
+        // ở cuối hàm đảm nhiệm như bình thường.
+        tokens.push(CEDICT_PINYIN[chunk].replace(/ /g, ""));
         i += len;
         matched = true;
         break;
