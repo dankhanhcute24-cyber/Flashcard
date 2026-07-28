@@ -11,6 +11,9 @@ const SWIPE_THRESHOLD = 60; // px - vuốt xa hơn mức này mới tính là "c
 const TAP_THRESHOLD = 8; // px - xê dịch dưới mức này vẫn coi là "bấm" (lật thẻ), không phải vuốt
 const SWIPE_ANIMATION_MS = 250; // thời gian (ms) cho hiệu ứng thẻ trượt ra/vào - phải khớp giữa CSS và setTimeout
 
+const LONG_PRESS_MS = 600; // giữ yên khoảng thời gian này mới tính là "nhấn giữ"
+const LONG_PRESS_MOVE_THRESHOLD = 10; // px - di chuyển quá mức này trong lúc giữ thì hủy (đang vuốt, không phải giữ yên)
+
 // ============================================================
 // DỮ LIỆU MẶC ĐỊNH (dùng khi mở app lần đầu, chưa có gì trong localStorage)
 // ============================================================
@@ -154,18 +157,19 @@ function updateStorageWarning(state) {
 const cardEl = document.getElementById("card");
 const cardContentEl = document.getElementById("cardContent");
 const counterEl = document.getElementById("counter");
-const prevBtn = document.getElementById("prevBtn");
-const nextBtn = document.getElementById("nextBtn");
 const speakBtn = document.getElementById("speakBtn");
 const excelFileInput = document.getElementById("excelFile");
 const deckSelectEl = document.getElementById("deckSelect");
+const deckSelectWrap = document.getElementById("deckSelectWrap");
 const newDeckBtn = document.getElementById("newDeckBtn");
 const deleteDeckBtn = document.getElementById("deleteDeckBtn");
+const deckDeletePopover = document.getElementById("deckDeletePopover");
 const storageWarningEl = document.getElementById("storageWarning");
 
 const addCardBtn = document.getElementById("addCardBtn");
 const editCardBtn = document.getElementById("editCardBtn");
 const deleteCardBtn = document.getElementById("deleteCardBtn");
+const cardDeletePopover = document.getElementById("cardDeletePopover");
 
 const cardFormOverlay = document.getElementById("cardFormOverlay");
 const cardForm = document.getElementById("cardForm");
@@ -191,6 +195,15 @@ let isFlipped = false;
 let isDragging = false;
 let dragStartX = 0;
 let dragCurrentX = 0;
+
+// Trạng thái theo dõi cử chỉ "nhấn giữ" trên thẻ (để hiện nút xóa thẻ)
+let cardLongPressTimer = null;
+let cardLongPressTriggered = false;
+
+// Trạng thái theo dõi cử chỉ "nhấn giữ" trên dropdown bộ thẻ (để hiện nút xóa bộ)
+let deckLongPressTimer = null;
+let deckPressStartX = 0;
+let deckPressStartY = 0;
 
 // null = đang thêm thẻ mới, số = đang sửa thẻ ở vị trí đó trong mảng "cards"
 let editingCardIndex = null;
@@ -241,10 +254,9 @@ function renderPinyinByTone(pinyin) {
 
 // Hiển thị thẻ hiện tại (mặt trước hoặc mặt sau tùy isFlipped)
 function renderCard() {
-  // Chỉ cho phép Sửa/Xóa khi bộ thẻ có ít nhất 1 thẻ đang được xem
+  // Chỉ cho phép Sửa khi bộ thẻ có ít nhất 1 thẻ đang được xem
   const hasCards = cards.length > 0;
   editCardBtn.disabled = !hasCards;
-  deleteCardBtn.disabled = !hasCards;
 
   if (!hasCards) {
     cardContentEl.innerHTML = `<p class="empty-state">Bộ thẻ này chưa có thẻ nào.<br>Bấm "➕ Thêm thẻ" hoặc tải file Excel để thêm từ vựng.</p>`;
@@ -313,6 +325,9 @@ function renderDeckSelect() {
 
 // Chuyển sang bộ thẻ khác khi chọn trong dropdown
 deckSelectEl.addEventListener("change", (event) => {
+  closeCardDeletePopover();
+  closeDeckDeletePopover();
+
   appState.activeDeckId = event.target.value;
   cards = getActiveDeck().cards;
   currentIndex = 0;
@@ -340,8 +355,11 @@ newDeckBtn.addEventListener("click", () => {
   renderCard();
 });
 
-// Xóa bộ thẻ đang chọn (có xác nhận trước khi xóa)
+// Xóa bộ thẻ đang chọn (có xác nhận trước khi xóa) - nút này nằm trong popover,
+// chỉ hiện ra khi nhấn giữ vào dropdown (xem phần "NHẤN GIỮ ĐỂ XÓA" bên dưới)
 deleteDeckBtn.addEventListener("click", () => {
+  closeDeckDeletePopover();
+
   if (appState.decks.length <= 1) {
     alert("Không thể xóa vì đây là bộ thẻ duy nhất còn lại.");
     return;
@@ -365,43 +383,106 @@ deleteDeckBtn.addEventListener("click", () => {
   speakCurrentWord();
 });
 
+// ------------------------------------------------------------
+// Nhấn giữ vào dropdown bộ thẻ để hiện nút "🗑 Xóa bộ này"
+// ------------------------------------------------------------
+
+function openDeckDeletePopover() {
+  deckDeletePopover.hidden = false;
+  deckDeletePopover.classList.add("open");
+}
+
+function closeDeckDeletePopover() {
+  deckDeletePopover.hidden = true;
+  deckDeletePopover.classList.remove("open");
+}
+
+deckSelectWrap.addEventListener("pointerdown", (event) => {
+  deckPressStartX = event.clientX;
+  deckPressStartY = event.clientY;
+
+  deckLongPressTimer = setTimeout(() => {
+    deckLongPressTimer = null;
+    deckSelectEl.blur(); // đóng dropdown gốc nếu lỡ đang mở, tránh chồng lấn giao diện
+    openDeckDeletePopover();
+  }, LONG_PRESS_MS);
+});
+
+deckSelectWrap.addEventListener("pointermove", (event) => {
+  if (!deckLongPressTimer) return;
+  const dx = Math.abs(event.clientX - deckPressStartX);
+  const dy = Math.abs(event.clientY - deckPressStartY);
+  if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+    clearTimeout(deckLongPressTimer);
+    deckLongPressTimer = null;
+  }
+});
+
+deckSelectWrap.addEventListener("pointerup", () => {
+  if (deckLongPressTimer) {
+    clearTimeout(deckLongPressTimer);
+    deckLongPressTimer = null;
+  }
+});
+
+deckSelectWrap.addEventListener("pointercancel", () => {
+  if (deckLongPressTimer) {
+    clearTimeout(deckLongPressTimer);
+    deckLongPressTimer = null;
+  }
+});
+
+// Bấm ra ngoài popover xóa bộ (và ngoài luôn cả dropdown) để đóng lại, không xóa gì cả
+document.addEventListener("click", (event) => {
+  if (
+    deckDeletePopover.classList.contains("open") &&
+    !deckDeletePopover.contains(event.target) &&
+    !deckSelectWrap.contains(event.target)
+  ) {
+    closeDeckDeletePopover();
+  }
+});
+
 // ============================================================
 // TƯƠNG TÁC VỚI THẺ (lật thẻ, chuyển thẻ)
 // ============================================================
 
-// Chuyển sang thẻ tiếp theo - dùng chung cho nút "Tiếp theo" VÀ vuốt sang trái
+// Chuyển sang thẻ tiếp theo - dùng cho thao tác vuốt sang trái
 function goToNextCard() {
   if (cards.length === 0) return;
+  closeCardDeletePopover();
   currentIndex = (currentIndex + 1) % cards.length;
   isFlipped = false;
   renderCard();
   speakCurrentWord();
 }
 
-// Quay lại thẻ trước đó - dùng chung cho nút "Trước đó" VÀ vuốt sang phải
+// Quay lại thẻ trước đó - dùng cho thao tác vuốt sang phải
 function goToPrevCard() {
   if (cards.length === 0) return;
+  closeCardDeletePopover();
   currentIndex = (currentIndex - 1 + cards.length) % cards.length;
   isFlipped = false;
   renderCard();
   speakCurrentWord();
 }
 
-nextBtn.addEventListener("click", goToNextCard);
-prevBtn.addEventListener("click", goToPrevCard);
-
 // Đọc lại từ hiện tại theo yêu cầu
 speakBtn.addEventListener("click", speakCurrentWord);
 
 // ------------------------------------------------------------
-// Vuốt/kéo trên thẻ để chuyển thẻ (hỗ trợ cả cảm ứng và chuột)
+// Bấm / Vuốt / Nhấn giữ trên thẻ (hỗ trợ cả cảm ứng và chuột)
 //
-// Cách phân biệt "bấm để lật" và "vuốt để chuyển thẻ":
-// Cả 2 đều bắt đầu bằng pointerdown và kết thúc bằng pointerup, chỉ khác
-// nhau ở QUÃNG ĐƯỜNG con trỏ di chuyển giữa 2 thời điểm đó:
-//   - Di chuyển rất ít (< TAP_THRESHOLD)   -> coi là 1 cú "bấm" -> lật thẻ
-//   - Di chuyển đủ xa (>= SWIPE_THRESHOLD) -> coi là "vuốt"     -> chuyển thẻ
-//   - Ở khoảng giữa (có kéo nhưng chưa đủ xa) -> không tính, thẻ tự trượt về chỗ cũ
+// Cách phân biệt 3 thao tác - cả 3 đều bắt đầu bằng pointerdown, chỉ khác
+// nhau ở QUÃNG ĐƯỜNG di chuyển và THỜI GIAN giữ trước khi thả tay/chuột ra:
+//   - Thả ra sớm (trước LONG_PRESS_MS) và gần như không di chuyển
+//     (< TAP_THRESHOLD)                    -> "bấm"      -> lật thẻ
+//   - Thả ra sớm nhưng di chuyển đủ xa
+//     (>= SWIPE_THRESHOLD)                 -> "vuốt"     -> chuyển thẻ
+//   - Giữ yên (di chuyển < LONG_PRESS_MOVE_THRESHOLD) đủ LONG_PRESS_MS
+//     mà CHƯA thả ra                       -> "nhấn giữ" -> hiện nút xóa thẻ
+// Hễ người dùng bắt đầu di chuyển đáng kể (đang vuốt), bộ đếm "nhấn giữ"
+// bị hủy ngay để không bị nhầm vuốt thành nhấn giữ.
 // ------------------------------------------------------------
 
 // Xóa transform/transition đã gán bằng JS, trả quyền điều khiển giao diện
@@ -441,18 +522,34 @@ function animateSwipeChange(goingNext) {
 
 cardEl.addEventListener("pointerdown", (event) => {
   if (cards.length === 0) return;
+  closeCardDeletePopover(); // đang bấm mới thì đóng popover xóa của lần giữ trước (nếu còn sót)
 
   isDragging = true;
   dragStartX = event.clientX;
   dragCurrentX = 0;
+  cardLongPressTriggered = false;
 
   cardEl.setPointerCapture(event.pointerId); // giữ nhận sự kiện dù con trỏ đi ra ngoài phạm vi thẻ
   cardEl.style.transition = "none"; // tắt hiệu ứng mượt trong lúc đang kéo để thẻ bám sát ngón tay/chuột
+
+  // Bắt đầu đếm giờ "nhấn giữ" - nếu giữ đủ lâu mà chưa thả ra thì hiện nút xóa
+  cardLongPressTimer = setTimeout(() => {
+    cardLongPressTimer = null;
+    cardLongPressTriggered = true;
+    openCardDeletePopover();
+  }, LONG_PRESS_MS);
 });
 
 cardEl.addEventListener("pointermove", (event) => {
   if (!isDragging) return;
   dragCurrentX = event.clientX - dragStartX;
+
+  // Di chuyển đủ nhiều nghĩa là người dùng đang vuốt, không phải giữ yên -> hủy đếm giờ nhấn giữ
+  if (cardLongPressTimer && Math.abs(dragCurrentX) > LONG_PRESS_MOVE_THRESHOLD) {
+    clearTimeout(cardLongPressTimer);
+    cardLongPressTimer = null;
+  }
+
   cardEl.style.transform = `translateX(${dragCurrentX}px) rotate(${dragCurrentX / 24}deg)`;
 });
 
@@ -461,13 +558,23 @@ cardEl.addEventListener("pointerup", (event) => {
   isDragging = false;
   cardEl.releasePointerCapture(event.pointerId);
 
+  if (cardLongPressTimer) {
+    clearTimeout(cardLongPressTimer);
+    cardLongPressTimer = null;
+  }
+
   const distance = Math.abs(dragCurrentX);
   const draggedX = dragCurrentX;
   dragCurrentX = 0;
 
   cardEl.style.transition = `transform ${SWIPE_ANIMATION_MS}ms ease`;
 
-  if (distance < TAP_THRESHOLD) {
+  if (cardLongPressTriggered) {
+    // Đã hiện popup xóa rồi (do giữ đủ lâu) -> chỉ đưa thẻ về đúng vị trí,
+    // không lật cũng không chuyển thẻ
+    cardEl.style.transform = "translateX(0)";
+    setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+  } else if (distance < TAP_THRESHOLD) {
     // Gần như không di chuyển -> tính là 1 cú bấm -> lật thẻ
     cardEl.style.transform = "translateX(0)";
     setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
@@ -487,9 +594,41 @@ cardEl.addEventListener("pointerup", (event) => {
 cardEl.addEventListener("pointercancel", () => {
   isDragging = false;
   dragCurrentX = 0;
+  if (cardLongPressTimer) {
+    clearTimeout(cardLongPressTimer);
+    cardLongPressTimer = null;
+  }
   cardEl.style.transition = `transform ${SWIPE_ANIMATION_MS}ms ease`;
   cardEl.style.transform = "translateX(0)";
   setTimeout(clearCardTransform, SWIPE_ANIMATION_MS);
+});
+
+// ------------------------------------------------------------
+// Popover "🗑 Xóa thẻ này" - hiện ra khi nhấn giữ đủ lâu vào thẻ
+// ------------------------------------------------------------
+
+function openCardDeletePopover() {
+  cardDeletePopover.hidden = false;
+  cardDeletePopover.classList.add("open");
+}
+
+function closeCardDeletePopover() {
+  cardDeletePopover.hidden = true;
+  cardDeletePopover.classList.remove("open");
+}
+
+// Sự kiện trên popover phải dừng lại ở đây (stopPropagation), không cho "nổi bọt"
+// lên tới #card - nếu không, bấm vào popover sẽ vô tình kích hoạt lại logic
+// bấm/vuốt/giữ của thẻ bên dưới
+cardDeletePopover.addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+
+// Bấm vào vùng nền tối (ngoài nút xóa) để đóng popover, không xóa gì cả
+cardDeletePopover.addEventListener("click", (event) => {
+  if (event.target === cardDeletePopover) {
+    closeCardDeletePopover();
+  }
 });
 
 // ============================================================
@@ -579,6 +718,9 @@ excelFileInput.addEventListener("change", (event) => {
 
 // Mở form ở chế độ "Thêm thẻ mới" - các ô nhập để trống
 function openAddCardForm() {
+  closeCardDeletePopover();
+  closeDeckDeletePopover();
+
   editingCardIndex = null;
   cardFormTitleEl.textContent = "Thêm thẻ mới";
   cardForm.reset();
@@ -589,6 +731,8 @@ function openAddCardForm() {
 // Mở form ở chế độ "Sửa thẻ" - điền sẵn thông tin của thẻ đang xem
 function openEditCardForm() {
   if (cards.length === 0) return;
+  closeCardDeletePopover();
+  closeDeckDeletePopover();
 
   editingCardIndex = currentIndex;
   const card = cards[currentIndex];
@@ -622,11 +766,12 @@ cardFormOverlay.addEventListener("click", (event) => {
   }
 });
 
-// Bấm phím Esc để đóng form cho nhanh
+// Bấm phím Esc để đóng form/popover đang mở cho nhanh
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && cardFormOverlay.classList.contains("open")) {
-    closeCardForm();
-  }
+  if (event.key !== "Escape") return;
+  if (cardFormOverlay.classList.contains("open")) closeCardForm();
+  if (cardDeletePopover.classList.contains("open")) closeCardDeletePopover();
+  if (deckDeletePopover.classList.contains("open")) closeDeckDeletePopover();
 });
 
 // Lưu thẻ khi bấm nút "Lưu" trong form (thêm mới hoặc cập nhật thẻ đang sửa)
@@ -676,8 +821,10 @@ cardForm.addEventListener("submit", (event) => {
   closeCardForm();
 });
 
-// Xóa thẻ đang xem khỏi bộ thẻ (có xác nhận trước khi xóa)
+// Xóa thẻ đang xem khỏi bộ thẻ (có xác nhận trước khi xóa) - nút này nằm
+// trong popover, chỉ hiện ra khi nhấn giữ vào thẻ khoảng 0.6 giây
 deleteCardBtn.addEventListener("click", () => {
+  closeCardDeletePopover();
   if (cards.length === 0) return;
 
   const card = cards[currentIndex];

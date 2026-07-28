@@ -14,36 +14,39 @@
 </head>
 <body>
 
-  <h1>Flashcard tiếng Trung</h1>
-
   <div class="deck-bar">
-    <select id="deckSelect" class="deck-select"></select>
-    <button id="newDeckBtn" class="deck-btn">➕ Bộ mới</button>
-    <button id="deleteDeckBtn" class="deck-btn deck-btn-danger">🗑️ Xóa bộ</button>
+    <div class="deck-select-wrap" id="deckSelectWrap">
+      <select id="deckSelect" class="deck-select"></select>
+
+      <!-- Hiện ra khi nhấn giữ vào bộ thẻ đang chọn -->
+      <div class="deck-delete-popover" id="deckDeletePopover" hidden>
+        <button id="deleteDeckBtn" class="delete-popover-btn">🗑 Xóa bộ này</button>
+      </div>
+    </div>
+    <button id="newDeckBtn" class="deck-btn deck-btn-primary">➕ Bộ mới</button>
   </div>
 
   <p id="storageWarning" class="storage-warning" hidden></p>
 
-  <p class="hint">Bấm vào thẻ để lật xem đáp án</p>
+  <p class="hint">Bấm để lật · Vuốt để chuyển thẻ · Giữ để xóa</p>
 
   <div class="card" id="card">
     <div class="card-content" id="cardContent">
       <!-- Nội dung thẻ sẽ được JavaScript điền vào đây -->
     </div>
+
+    <!-- Hiện ra khi nhấn giữ vào thẻ -->
+    <div class="card-delete-popover" id="cardDeletePopover" hidden>
+      <button id="deleteCardBtn" class="delete-popover-btn">🗑 Xóa thẻ này</button>
+    </div>
   </div>
 
   <p class="counter" id="counter"></p>
 
-  <div class="controls">
-    <button id="prevBtn">← Trước đó</button>
-    <button id="speakBtn">🔊 Đọc lại</button>
-    <button id="nextBtn">Tiếp theo →</button>
-  </div>
-
-  <div class="deck-bar card-actions">
+  <div class="card-actions">
+    <button id="speakBtn" class="deck-btn">🔊 Đọc lại</button>
+    <button id="editCardBtn" class="deck-btn">✏️ Sửa</button>
     <button id="addCardBtn" class="deck-btn deck-btn-primary">➕ Thêm thẻ</button>
-    <button id="editCardBtn" class="deck-btn">✏️ Sửa thẻ</button>
-    <button id="deleteCardBtn" class="deck-btn deck-btn-danger">🗑️ Xóa thẻ</button>
   </div>
 
   <div class="upload">

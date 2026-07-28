@@ -8,10 +8,6 @@ body {
   overflow-x: hidden; /* tránh hiện thanh cuộn ngang khi thẻ trượt ra ngoài màn hình lúc vuốt */
 }
 
-h1 {
-  margin-bottom: 4px;
-}
-
 .hint {
   color: #777;
   margin-top: 0;
@@ -44,6 +40,14 @@ h1 {
   border-color: #0D47A1;
 }
 
+/* Bọc ngoài dropdown để: 1) làm điểm neo định vị popover xóa bộ,
+   2) là nơi lắng nghe cử chỉ "nhấn giữ" (sự kiện pointer trên select
+   sẽ tự nổi bọt lên tới đây) */
+.deck-select-wrap {
+  position: relative;
+  display: inline-block;
+}
+
 .deck-btn {
   font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
@@ -61,15 +65,6 @@ h1 {
   background-color: #E8F0FB;
 }
 
-.deck-btn-danger {
-  border-color: #D32F2F;
-  color: #D32F2F;
-}
-
-.deck-btn-danger:hover {
-  background-color: #FDECEA;
-}
-
 .deck-btn-primary {
   background-color: #1565C0;
   color: #ffffff;
@@ -80,14 +75,12 @@ h1 {
 }
 
 .deck-btn:disabled,
-.deck-btn-primary:disabled,
-.deck-btn-danger:disabled {
+.deck-btn-primary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.deck-btn:disabled:hover,
-.deck-btn-danger:disabled:hover {
+.deck-btn:disabled:hover {
   background-color: transparent;
 }
 
@@ -96,8 +89,73 @@ h1 {
 }
 
 .card-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 16px;
   margin-bottom: 12px;
+}
+
+/* Nút xóa dùng chung cho cả popover xóa bộ và popover xóa thẻ */
+.delete-popover-btn {
+  font-family: 'Be Vietnam Pro', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 2px solid #D32F2F;
+  background-color: #ffffff;
+  color: #D32F2F;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  transition: background-color 0.2s ease;
+}
+
+.delete-popover-btn:hover {
+  background-color: #FDECEA;
+}
+
+/* Popover xóa bộ thẻ - hiện dưới dropdown khi nhấn giữ */
+.deck-delete-popover {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  z-index: 20;
+}
+
+.deck-delete-popover.open {
+  display: block;
+}
+
+/* Popover xóa thẻ - phủ lên toàn bộ thẻ khi nhấn giữ, có nền mờ để
+   người dùng biết đang ở "chế độ xóa", bấm ra ngoài nút để hủy */
+.card-delete-popover {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(26, 26, 26, 0.55);
+  border-radius: 12px;
+  cursor: default;
+}
+
+.card-delete-popover.open {
+  display: flex;
+}
+
+.card-delete-popover .delete-popover-btn {
+  background-color: #D32F2F;
+  color: #ffffff;
+}
+
+.card-delete-popover .delete-popover-btn:hover {
+  background-color: #B71C1C;
 }
 
 .storage-warning {
@@ -117,6 +175,7 @@ h1 {
    để chắc chắn thẻ không bao giờ tràn ra ngoài màn hình dù điện thoại nhỏ đến đâu.
    min-height được đặt gần bằng width để thẻ có dáng vuông thay vì dẹt như trước. */
 .card {
+  position: relative; /* để .card-delete-popover phủ đúng lên thẻ này */
   width: 92%;
   max-width: 420px;
   min-height: 380px;
@@ -218,32 +277,10 @@ h1 {
 }
 
 .counter {
-  margin-top: 16px;
-  color: #777;
-}
-
-.controls {
-  margin-top: 20px;
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-}
-
-button {
-  font-family: 'Be Vietnam Pro', sans-serif;
-  padding: 10px 18px;
-  font-size: 16px;
-  font-weight: 600;
-  border: none;
-  border-radius: 8px;
-  background-color: #1565C0;
-  color: #ffffff;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-button:hover {
-  background-color: #0D47A1;
+  margin-top: 14px;
+  color: #999;
+  font-size: 13px;
+  letter-spacing: 0.5px;
 }
 
 .upload {
