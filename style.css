@@ -35,6 +35,12 @@ h1 {
   background-color: #ffffff;
   color: #1a1a1a;
   max-width: 220px;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.deck-select:hover {
+  border-color: #0D47A1;
 }
 
 .deck-btn {
@@ -47,6 +53,7 @@ h1 {
   background-color: transparent;
   color: #1565C0;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .deck-btn:hover {
@@ -117,7 +124,12 @@ h1 {
   cursor: pointer;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   user-select: none;
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  transform: scale(1.03);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
 }
 
 .card:active {
@@ -220,6 +232,7 @@ button {
   background-color: #1565C0;
   color: #ffffff;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 button:hover {
@@ -241,6 +254,7 @@ button:hover {
   background-color: transparent;
   color: #1565C0;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .upload-btn:hover {
