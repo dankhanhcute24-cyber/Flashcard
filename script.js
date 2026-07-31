@@ -136,7 +136,7 @@ function saveAppState(state) {
   // Nếu đã đăng nhập, đẩy luôn thay đổi này lên Firestore để đồng bộ sang
   // các thiết bị khác. Nếu chưa đăng nhập, hàm này tự bỏ qua (no-op) -
   // app vẫn hoạt động 100% bằng localStorage như trước, không bắt buộc đăng nhập.
-  writeStateToCloud(state);
+  syncActiveDeckToCloud();
 }
 
 function getActiveDeck() {
@@ -206,7 +206,7 @@ const formExampleMeaningEl = document.getElementById("formExampleMeaning");
 // ============================================================
 // TRẠNG THÁI ĐỒNG BỘ FIREBASE (khai báo SỚM, trước loadAppState() bên dưới)
 //
-// saveAppState() (định nghĩa ở trên) gọi writeStateToCloud() - hàm đó đọc
+// saveAppState() (định nghĩa ở trên) gọi syncActiveDeckToCloud() - hàm đó đọc
 // các biến "firebaseReady/currentUser/..." này. loadAppState() có thể gọi
 // saveAppState() NGAY TỪ NHỮNG DÒNG ĐẦU TIÊN của app (khi chưa có gì trong
 // localStorage), tức là trước khi trình duyệt kịp chạy tới phần khai báo ở
@@ -220,11 +220,18 @@ const formExampleMeaningEl = document.getElementById("formExampleMeaning");
 let firebaseAuth = null;
 let firebaseDb = null;
 let firestoreFns = null;
-let firestoreDocRef = null;
 let currentUser = null;
 let unsubscribeSnapshot = null;
 let firebaseReady = false;
-let lastWriteId = null;
+let lastMetaWriteId = null;
+
+// Bộ nhớ đệm: JSON của mảng "cards" mỗi bộ thẻ ĐÃ đồng bộ lên Firestore
+// THÀNH CÔNG lần gần nhất (deckId -> JSON string). Dùng để BỎ QUA việc ghi
+// lại toàn bộ thẻ của 1 bộ khi nội dung bộ đó KHÔNG hề thay đổi (ví dụ chỉ
+// đơn giản là chuyển sang xem bộ đó, hoặc sửa 1 bộ KHÁC) - tránh ghi lại
+// hàng nghìn document một cách lãng phí (và tốn quota ghi của Firestore)
+// mỗi khi người dùng chỉ đổi bộ thẻ đang xem.
+const lastSyncedCardsJSON = {};
 
 // ============================================================
 // TRẠNG THÁI CHÍNH CỦA APP
@@ -450,6 +457,8 @@ deleteDeckBtn.addEventListener("click", () => {
     `Bạn có chắc muốn xóa bộ thẻ "${activeDeck.name}" (${activeDeck.cards.length} thẻ)?\nThao tác này không thể hoàn tác.`
   );
   if (!confirmed) return;
+
+  deleteDeckFromCloud(activeDeck.id, activeDeck.name); // xóa hẳn bộ này + toàn bộ thẻ của nó trên Firestore
 
   appState.decks = appState.decks.filter((deck) => deck.id !== activeDeck.id);
   appState.activeDeckId = appState.decks[0].id;
@@ -1069,10 +1078,10 @@ deleteCardBtn.addEventListener("click", () => {
 //   - Chưa đăng nhập  -> app hoạt động y hệt như trước (chỉ lưu localStorage).
 //   - Đã đăng nhập    -> mỗi lần saveAppState() được gọi (thêm/sửa/xóa thẻ,
 //     đổi bộ thẻ, tải Excel...) dữ liệu vẫn lưu localStorage NHƯ CŨ, đồng
-//     thời được ghi thêm lên Firestore (writeStateToCloud - gọi ở cuối
+//     thời được ghi thêm lên Firestore (syncActiveDeckToCloud - gọi ở cuối
 //     saveAppState() phía trên). Khi mở app trên thiết bị khác và đăng nhập
 //     cùng tài khoản Google, dữ liệu trên Firestore được tải về và thay thế
-//     dữ liệu cục bộ (xem applyRemoteState).
+//     dữ liệu cục bộ (xem applyRemoteFullState).
 //
 // Dùng dynamic import() (thay vì thẻ <script type="module">) để tải SDK
 // Firebase ngay bên trong file script.js bình thường này - nhờ vậy mọi biến
@@ -1096,16 +1105,40 @@ const firebaseConfig = {
 
 const FIREBASE_SDK_VERSION = "10.12.2";
 
-// (Các biến firebaseAuth/firebaseDb/firestoreFns/firestoreDocRef/currentUser/
-// unsubscribeSnapshot/firebaseReady/lastWriteId đã được khai báo sớm hơn ở
+// Firestore giới hạn TỐI ĐA 500 thao tác ghi/xóa trong 1 "batch" (1 lần commit
+// nguyên tử) - dùng 450 để chừa khoảng an toàn.
+const FIRESTORE_BATCH_CHUNK_SIZE = 450;
+
+// (Các biến firebaseAuth/firebaseDb/firestoreFns/currentUser/unsubscribeSnapshot/
+// firebaseReady/lastMetaWriteId/lastSyncedCardsJSON đã được khai báo sớm hơn ở
 // phần "TRẠNG THÁI ĐỒNG BỘ FIREBASE" phía trên, ngay trước loadAppState())
 
-// Đếm tổng số thẻ trong TOÀN BỘ các bộ thẻ - dùng để phát hiện dữ liệu tải
-// từ Firestore về "rỗng bất thường" (0 thẻ) trong khi máy đang có thẻ thật,
-// để tránh ghi đè nhầm khi đồng bộ lỗi/dở dang (xem applyRemoteState bên dưới).
-function countTotalCards(decks) {
-  if (!Array.isArray(decks)) return 0;
-  return decks.reduce((sum, deck) => sum + (Array.isArray(deck.cards) ? deck.cards.length : 0), 0);
+// ------------------------------------------------------------
+// CẤU TRÚC LƯU TRỮ TRÊN FIRESTORE
+//
+// TRƯỚC ĐÂY: mỗi user 1 document DUY NHẤT (users/{uid}) chứa TOÀN BỘ mọi bộ
+// thẻ + mọi thẻ dồn vào 1 field "decks" (mảng lồng mảng). Cách này có 1 lỗi
+// nghiêm trọng: Firestore giới hạn MỖI DOCUMENT tối đa ~1MB. Một bộ thẻ lớn
+// (ví dụ ~1800 thẻ HSK6 có câu ví dụ) đã xấp xỉ 1MB CHỈ RIÊNG bộ đó - cộng
+// thêm các bộ khác trong CÙNG 1 document là chắc chắn vượt giới hạn, khiến
+// Firestore từ chối ghi ("Chưa đồng bộ được lên đám mây").
+//
+// BÂY GIỜ: tách nhỏ ra nhiều document, mỗi document chỉ chứa 1 phần nhỏ:
+//   users/{uid}                              - { activeDeckId, deckOrder }
+//     (nhẹ, chỉ chứa id/thứ tự bộ thẻ - KHÔNG BAO GIỜ có nguy cơ vượt 1MB
+//     dù có bao nhiêu bộ/thẻ đi nữa)
+//   users/{uid}/decks/{deckId}               - { name }
+//   users/{uid}/decks/{deckId}/cards/{index} - { hanzi, pinyin, meaning, example }
+//     (MỖI THẺ 1 document riêng - dù bộ có 12.000 thẻ, mỗi document vẫn chỉ
+//     vài trăm byte, không thể nào chạm giới hạn 1MB)
+// Ghi nhiều thẻ dùng writeBatch(), chia thành từng đợt tối đa
+// FIRESTORE_BATCH_CHUNK_SIZE thẻ/đợt (giới hạn của Firestore là 500 thao
+// tác/batch) - ghi TUẦN TỰ từng đợt, đợt nào lỗi thì DỪNG NGAY, không đụng gì
+// tới dữ liệu cục bộ đang hiển thị, và báo rõ đã ghi được bao nhiêu thẻ.
+// ------------------------------------------------------------
+
+function cardDocId(index) {
+  return String(index);
 }
 
 let syncStatusHideTimer = null;
@@ -1127,68 +1160,232 @@ function showSyncStatus(text, persistent = false) {
   }
 }
 
-// Ghi state hiện tại lên Firestore (bỏ qua nếu chưa đăng nhập/Firebase chưa sẵn sàng)
-function writeStateToCloud(state) {
-  if (!firebaseReady || !currentUser || !firestoreDocRef || !firestoreFns) return;
+// Ghi document nhỏ "users/{uid}" (chỉ activeDeckId + thứ tự các bộ thẻ) -
+// document này luôn nhỏ, không bao giờ có nguy cơ vượt giới hạn dung lượng.
+function writeMetaToCloud() {
+  if (!firebaseReady || !currentUser || !firestoreFns) return;
 
+  const { doc, setDoc } = firestoreFns;
   const syncId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  lastWriteId = syncId;
+  lastMetaWriteId = syncId;
 
-  const { setDoc } = firestoreFns;
-  showSyncStatus("⏳ Đang đồng bộ...");
-  setDoc(firestoreDocRef, {
-    activeDeckId: state.activeDeckId,
-    decks: state.decks,
+  const metaRef = doc(firebaseDb, "users", currentUser.uid);
+  setDoc(metaRef, {
+    activeDeckId: appState.activeDeckId,
+    deckOrder: appState.decks.map((deck) => deck.id),
     _syncId: syncId
-  })
-    .then(() => showSyncStatus("☁️ Đã đồng bộ"))
-    .catch((error) => {
-      console.warn("Lỗi đồng bộ lên Firestore:", error);
-      showSyncStatus("⚠️ Chưa đồng bộ được lên đám mây - thay đổi mới nhất hiện chỉ lưu trên máy này.", true);
-    });
+  }).catch((error) => {
+    console.warn("Lỗi đồng bộ danh sách bộ thẻ lên Firestore:", error);
+    showSyncStatus("⚠️ Chưa đồng bộ được danh sách bộ thẻ lên đám mây.", true);
+  });
+}
+
+// Ghi 1 BỘ THẺ lên Firestore: document tên bộ + MỖI THẺ 1 document riêng
+// trong subcollection "cards" (đánh số theo vị trí trong mảng). Trả về
+// true/false để nơi gọi biết có nên cập nhật bộ nhớ đệm lastSyncedCardsJSON hay không.
+async function writeDeckToCloud(deck) {
+  if (!firebaseReady || !currentUser || !firestoreFns) return false;
+
+  const { doc, collection, getDocs, writeBatch } = firestoreFns;
+  const deckRef = doc(firebaseDb, "users", currentUser.uid, "decks", deck.id);
+  const cardsColRef = collection(deckRef, "cards");
+  const totalCards = deck.cards.length;
+  let writtenCount = 0;
+
+  showSyncStatus("⏳ Đang đồng bộ...");
+
+  try {
+    const metaBatch = writeBatch(firebaseDb);
+    metaBatch.set(deckRef, { name: deck.name });
+    await metaBatch.commit();
+
+    // Ghi từng đợt tối đa FIRESTORE_BATCH_CHUNK_SIZE thẻ, TUẦN TỰ (đợt sau
+    // chỉ chạy khi đợt trước đã ghi THÀNH CÔNG) - nếu 1 đợt lỗi giữa chừng
+    // (mất mạng, hết quota...), dừng ngay tại đây, KHÔNG động vào dữ liệu cục
+    // bộ (biến "cards" trên máy vẫn còn nguyên như trước khi gọi hàm này).
+    for (let start = 0; start < totalCards; start += FIRESTORE_BATCH_CHUNK_SIZE) {
+      const end = Math.min(start + FIRESTORE_BATCH_CHUNK_SIZE, totalCards);
+      const batch = writeBatch(firebaseDb);
+      for (let i = start; i < end; i++) {
+        const card = deck.cards[i];
+        batch.set(doc(cardsColRef, cardDocId(i)), {
+          hanzi: card.hanzi || "",
+          pinyin: card.pinyin || "",
+          meaning: card.meaning || "",
+          example: {
+            hanzi: (card.example && card.example.hanzi) || "",
+            pinyin: (card.example && card.example.pinyin) || "",
+            meaning: (card.example && card.example.meaning) || ""
+          }
+        });
+      }
+      await batch.commit();
+      writtenCount = end;
+    }
+
+    // Dọn các document thẻ CŨ dư ra (nếu bộ vừa bị rút ngắn - ví dụ xóa bớt
+    // thẻ, hoặc tải đè file Excel mới ít thẻ hơn) - CHỈ làm bước này SAU KHI
+    // toàn bộ thẻ MỚI đã ghi thành công ở trên, để không lỡ xóa mất thẻ cũ
+    // trong lúc việc ghi thẻ mới đang thất bại giữa chừng.
+    const existingSnap = await getDocs(cardsColRef);
+    const staleDocs = existingSnap.docs.filter((d) => Number(d.id) >= totalCards);
+    for (let i = 0; i < staleDocs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
+      const batch = writeBatch(firebaseDb);
+      staleDocs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    showSyncStatus("☁️ Đã đồng bộ");
+    return true;
+  } catch (error) {
+    console.warn(`Lỗi đồng bộ bộ thẻ "${deck.name}" lên Firestore:`, error);
+    showSyncStatus(
+      `⚠️ Đồng bộ bộ "${deck.name}" thất bại giữa chừng: đã ghi được ${writtenCount}/${totalCards} thẻ lên đám mây, ` +
+        `còn ${totalCards - writtenCount} thẻ chưa đồng bộ. Dữ liệu trên máy này vẫn giữ nguyên đầy đủ, không mất gì - ` +
+        `hãy thử lại khi có mạng ổn định (sửa rồi lưu lại 1 thẻ bất kỳ trong bộ này để kích hoạt đồng bộ lại).`,
+      true
+    );
+    return false;
+  }
+}
+
+// Xóa hẳn 1 bộ thẻ trên Firestore (document tên bộ + toàn bộ document thẻ
+// trong subcollection "cards") - gọi khi người dùng bấm "Xóa bộ này".
+async function deleteDeckFromCloud(deckId, deckName) {
+  if (!firebaseReady || !currentUser || !firestoreFns) return;
+
+  const { doc, collection, getDocs, writeBatch, deleteDoc } = firestoreFns;
+  try {
+    const deckRef = doc(firebaseDb, "users", currentUser.uid, "decks", deckId);
+    const cardsColRef = collection(deckRef, "cards");
+    const existingSnap = await getDocs(cardsColRef);
+
+    for (let i = 0; i < existingSnap.docs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
+      const batch = writeBatch(firebaseDb);
+      existingSnap.docs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    await deleteDoc(deckRef);
+    delete lastSyncedCardsJSON[deckId];
+  } catch (error) {
+    console.warn(`Lỗi xóa bộ thẻ "${deckName}" trên Firestore:`, error);
+    showSyncStatus(`⚠️ Xóa bộ "${deckName}" trên đám mây thất bại - có thể cần thử lại khi có mạng.`, true);
+  }
+}
+
+// Đồng bộ bộ thẻ ĐANG XEM lên Firestore (gọi từ saveAppState() ở trên, sau
+// MỌI thao tác thêm/sửa/xóa thẻ, đổi bộ, tải Excel...). Luôn ghi lại document
+// meta (nhỏ, rẻ), nhưng CHỈ ghi lại toàn bộ thẻ của bộ đang xem nếu nội dung
+// bộ đó thực sự thay đổi so với lần đồng bộ gần nhất - tránh việc chỉ đơn
+// giản CHUYỂN SANG XEM 1 bộ thẻ lớn (ví dụ 1800 thẻ) cũng bị ghi lại toàn bộ
+// 1800 document một cách lãng phí.
+function syncActiveDeckToCloud() {
+  // QUAN TRỌNG: phải kiểm tra và thoát sớm ở đây, TRƯỚC KHI đụng vào
+  // getActiveDeck() (đọc biến toàn cục "appState"). Hàm này được gọi từ
+  // saveAppState(), mà saveAppState() có thể được gọi RẤT SỚM lúc khởi động
+  // app (từ bên trong loadAppState(), khi chưa có gì trong localStorage) -
+  // tức là TRƯỚC KHI dòng "let appState = loadAppState();" kịp gán xong giá
+  // trị cho appState. Nếu gọi getActiveDeck() lúc đó sẽ bị lỗi "Cannot access
+  // 'appState' before initialization" và làm SẬP TOÀN BỘ APP ngay từ đầu.
+  // Vì Firebase chỉ sẵn sàng (firebaseReady = true) sau khi initFirebase()
+  // tải xong SDK (luôn xảy ra SAU khi appState đã khởi tạo xong), kiểm tra
+  // firebaseReady trước tiên ở đây loại bỏ hoàn toàn nguy cơ đó.
+  if (!firebaseReady || !currentUser || !firestoreFns) return;
+
+  writeMetaToCloud();
+
+  const deck = getActiveDeck();
+  if (!deck) return;
+
+  const cardsJSON = JSON.stringify(deck.cards);
+  if (lastSyncedCardsJSON[deck.id] === cardsJSON) return;
+
+  writeDeckToCloud(deck).then((ok) => {
+    if (ok) lastSyncedCardsJSON[deck.id] = cardsJSON;
+  });
+}
+
+// Tải danh sách bộ thẻ (theo đúng id trong deckOrder) kèm TOÀN BỘ thẻ của
+// từng bộ từ Firestore về. Dùng chung cho cả lúc đăng nhập và lúc phát hiện
+// thay đổi từ thiết bị khác.
+async function fetchDecksByIds(uid, deckIds) {
+  const { doc, getDoc, collection, getDocs } = firestoreFns;
+  const decks = [];
+
+  for (const deckId of deckIds) {
+    const deckRef = doc(firebaseDb, "users", uid, "decks", deckId);
+    const deckSnap = await getDoc(deckRef);
+    if (!deckSnap.exists()) continue; // tham chiếu cũ tới bộ đã bị xóa - bỏ qua
+
+    const cardsSnap = await getDocs(collection(deckRef, "cards"));
+    const cards = cardsSnap.docs
+      .slice()
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map((d) => d.data());
+
+    decks.push({ id: deckId, name: deckSnap.data().name || deckId, cards });
+  }
+
+  return decks;
 }
 
 // Áp dụng dữ liệu tải từ Firestore vào app (khi vừa đăng nhập, hoặc khi một
 // thiết bị khác vừa thay đổi dữ liệu). Không gọi speakCurrentWord() ở đây vì
-// việc dữ liệu bất chợt cập nhật (do thiết bị khác) không nên tự phát âm thanh.
-function applyRemoteState(data) {
-  const incomingDecks = Array.isArray(data.decks) ? data.decks : [];
+// việc dữ liệu bất chợt cập nhật (do thiết bị khác) không nên tự phát âm
+// thanh. Trả về số bộ thẻ bị coi là "rỗng bất thường" (nếu > 0, nơi gọi nên
+// báo cho người dùng biết).
+function applyRemoteFullState(remote) {
+  const localDecksById = new Map(appState.decks.map((deck) => [deck.id, deck]));
+  let suspiciousCount = 0;
 
-  // CHỐT AN TOÀN: nếu dữ liệu tải về có 0 thẻ trong TẤT CẢ các bộ, trong khi
-  // máy này ĐANG có thẻ thật (currentCardCount > 0) -> rất có thể đây là dữ
-  // liệu bị lỗi/đọc dở dang (mất mạng giữa chừng, tài liệu Firestore chưa ghi
-  // xong, quyền truy cập bị từ chối nhưng vẫn trả về rỗng thay vì báo lỗi...),
-  // KHÔNG PHẢI người dùng thật sự đã xóa hết thẻ ở thiết bị khác. Trường hợp
-  // đó mà vẫn ghi đè thì coi như mất trắng dữ liệu đang xem trên máy này ->
-  // từ chối áp dụng, giữ nguyên dữ liệu hiện có và báo lỗi rõ ràng thay vì
-  // âm thầm xóa hết thẻ trên giao diện.
-  const incomingCardCount = countTotalCards(incomingDecks);
-  const currentCardCount = countTotalCards(appState.decks);
+  // CHỐT AN TOÀN THEO TỪNG BỘ THẺ RIÊNG LẺ: nếu 1 bộ cụ thể tải về có 0 thẻ
+  // trong khi máy này ĐANG có thẻ thật cho đúng bộ đó -> rất có thể là dữ
+  // liệu lỗi/ghi dở dang (ví dụ lần ghi trước đó thất bại giữa chừng do vượt
+  // giới hạn dung lượng hoặc mất mạng) - KHÔNG PHẢI người dùng thật sự đã xóa
+  // hết thẻ của bộ đó ở thiết bị khác. Trường hợp này: GIỮ NGUYÊN dữ liệu của
+  // RIÊNG bộ đó trên máy này, các bộ KHÁC vẫn cập nhật bình thường - đây
+  // chính là kiểu lỗi đã xảy ra với bộ HSK6 trước đây.
+  const safeDecks = remote.decks.map((remoteDeck) => {
+    const localDeck = localDecksById.get(remoteDeck.id);
+    const remoteCardCount = Array.isArray(remoteDeck.cards) ? remoteDeck.cards.length : 0;
 
-  if (incomingCardCount === 0 && currentCardCount > 0) {
-    console.warn(
-      "Dữ liệu tải từ Firestore rỗng bất thường (0 thẻ) trong khi máy đang có thẻ - đã BỎ QUA để tránh mất dữ liệu.",
-      data
-    );
-    showSyncStatus(
-      "⚠️ Dữ liệu đồng bộ tải về bị rỗng bất thường - đã giữ nguyên các thẻ hiện có trên máy này, KHÔNG ghi đè.",
-      true
-    );
-    return;
-  }
+    if (remoteCardCount === 0 && localDeck && localDeck.cards.length > 0) {
+      suspiciousCount++;
+      console.warn(
+        `Bộ thẻ "${remoteDeck.name}" tải từ Firestore về rỗng (0 thẻ) trong khi máy này đang có ${localDeck.cards.length} thẻ - đã giữ nguyên dữ liệu của bộ này trên máy, không ghi đè.`
+      );
+      return localDeck;
+    }
+    return remoteDeck;
+  });
+
+  // Bộ thẻ nào có trên máy này nhưng CHƯA từng xuất hiện trên đám mây (ví dụ
+  // vừa tạo lúc mất mạng, chưa kịp đồng bộ) -> giữ lại, không để mất, và
+  // tranh thủ đẩy lên đám mây luôn trong lần đồng bộ này.
+  const remoteIds = new Set(remote.decks.map((deck) => deck.id));
+  const localOnlyDecks = appState.decks.filter((deck) => !remoteIds.has(deck.id));
+  const finalDecks = [...safeDecks, ...localOnlyDecks];
 
   appState = {
-    activeDeckId: data.activeDeckId,
-    decks: incomingDecks
+    activeDeckId:
+      remote.activeDeckId && finalDecks.some((deck) => deck.id === remote.activeDeckId)
+        ? remote.activeDeckId
+        : finalDecks[0]
+          ? finalDecks[0].id
+          : null,
+    decks: finalDecks
   };
-
-  if (!getActiveDeck() && appState.decks.length > 0) {
-    appState.activeDeckId = appState.decks[0].id;
-  }
 
   cards = getActiveDeck() ? getActiveDeck().cards : [];
   currentIndex = 0;
   isFlipped = false;
+
+  // Đánh dấu các bộ vừa áp dụng nguyên vẹn từ đám mây là "đã khớp đồng bộ",
+  // để nếu người dùng chỉ chuyển sang xem 1 bộ lớn ngay sau khi đăng nhập,
+  // syncActiveDeckToCloud() không ghi lại vô ích toàn bộ thẻ của bộ đó.
+  finalDecks.forEach((deck) => {
+    lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+  });
 
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
@@ -1199,6 +1396,17 @@ function applyRemoteState(data) {
 
   renderDeckSelect();
   renderCard();
+
+  if (localOnlyDecks.length > 0) {
+    localOnlyDecks.forEach((deck) => {
+      writeDeckToCloud(deck).then((ok) => {
+        if (ok) lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+      });
+    });
+    writeMetaToCloud();
+  }
+
+  return suspiciousCount;
 }
 
 // Chạy khi trạng thái đăng nhập thay đổi (đăng nhập, đăng xuất, hoặc lúc
@@ -1215,7 +1423,6 @@ async function handleAuthChange(user) {
     loginBtn.hidden = false;
     authUserEl.hidden = true;
     syncStatusEl.hidden = true;
-    firestoreDocRef = null;
     return;
   }
 
@@ -1225,38 +1432,42 @@ async function handleAuthChange(user) {
   authNameEl.textContent = user.displayName || user.email || "";
 
   const { doc, getDoc, onSnapshot } = firestoreFns;
-  firestoreDocRef = doc(firebaseDb, "users", user.uid);
+  const metaRef = doc(firebaseDb, "users", user.uid);
 
   showSyncStatus("⏳ Đang tải dữ liệu...");
 
   try {
-    const snap = await getDoc(firestoreDocRef);
+    const metaSnap = await getDoc(metaRef);
 
-    if (!snap.exists()) {
+    if (!metaSnap.exists()) {
       // Tài khoản này CHƯA TỪNG đồng bộ (chắc chắn, không phải do lỗi đọc -
-      // getDoc ném lỗi ở catch bên dưới nếu có sự cố) -> đẩy dữ liệu hiện có
-      // trên máy này (kể cả bộ thẻ mẫu) lên làm dữ liệu gốc trên đám mây
-      writeStateToCloud(appState);
+      // getDoc ném lỗi ở catch bên dưới nếu có sự cố) -> đẩy TOÀN BỘ dữ liệu
+      // hiện có trên máy này (mọi bộ thẻ, kể cả bộ mẫu) lên làm dữ liệu gốc
+      writeMetaToCloud();
+      for (const deck of appState.decks) {
+        const ok = await writeDeckToCloud(deck);
+        if (ok) lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+      }
       showSyncStatus("☁️ Đã đồng bộ");
     } else {
-      const data = snap.data();
-      const cloudCardCount = countTotalCards(data.decks);
+      const metaData = metaSnap.data();
+      const deckOrder = Array.isArray(metaData.deckOrder) ? metaData.deckOrder : [];
 
-      if (cloudCardCount > 0) {
-        // Đám mây đã có dữ liệu thật (ví dụ đã đăng nhập từ máy khác trước
-        // đó) -> tải về, thay thế dữ liệu đang có trên máy này
-        applyRemoteState(data);
-        showSyncStatus("☁️ Đã đồng bộ");
+      if (deckOrder.length === 0) {
+        // App KHÔNG BAO GIỜ tự tạo ra trạng thái "0 bộ thẻ" (luôn giữ lại ít
+        // nhất 1 bộ, xem nút "Xóa bộ này") nên đây chắc chắn là dữ liệu bị
+        // lỗi/ghi dở dang, KHÔNG PHẢI người dùng thật sự đã xóa hết mọi bộ
+        // thẻ -> không đụng vào gì, chỉ báo lỗi, giữ nguyên dữ liệu hiện có.
+        console.warn("Danh sách bộ thẻ trên Firestore rỗng bất thường - giữ nguyên dữ liệu trên máy.", metaData);
+        showSyncStatus("⚠️ Dữ liệu đám mây đang trống bất thường - đã giữ nguyên dữ liệu trên máy này.", true);
       } else {
-        // Tài liệu Firestore TỒN TẠI nhưng không có thẻ nào - không chắc đây
-        // là "tài khoản chưa có dữ liệu" (có thể do lỗi ghi dở dang từ trước).
-        // KHÔNG tự động ghi đè theo bất kỳ hướng nào (không tải xuống app,
-        // cũng không đẩy dữ liệu máy này lên đè lên đám mây) - chỉ báo cho
-        // biết và giữ nguyên dữ liệu hiện có, an toàn nhất cho cả 2 phía.
-        console.warn("Tài liệu Firestore tồn tại nhưng rỗng (0 thẻ) - bỏ qua để tránh ghi đè/mất dữ liệu.", data);
+        const remoteDecks = await fetchDecksByIds(user.uid, deckOrder);
+        const suspiciousCount = applyRemoteFullState({ activeDeckId: metaData.activeDeckId, decks: remoteDecks });
         showSyncStatus(
-          "⚠️ Dữ liệu đám mây đang trống bất thường - đã giữ nguyên dữ liệu trên máy này, chưa đồng bộ.",
-          true
+          suspiciousCount > 0
+            ? `⚠️ ${suspiciousCount} bộ thẻ tải về bị rỗng bất thường - đã giữ nguyên dữ liệu cũ cho (các) bộ đó.`
+            : "☁️ Đã đồng bộ",
+          suspiciousCount > 0
         );
       }
     }
@@ -1268,21 +1479,42 @@ async function handleAuthChange(user) {
     );
   }
 
-  // Lắng nghe thay đổi xảy ra trên CÁC THIẾT BỊ KHÁC (đăng nhập cùng tài
-  // khoản) để tự động cập nhật ngay cả khi app đang mở sẵn ở đây
+  // Lắng nghe THAY ĐỔI CẤU TRÚC (bộ thẻ nào đang có, đang xem bộ nào) từ CÁC
+  // THIẾT BỊ KHÁC. Chỉ lắng nghe document NHỎ "users/{uid}" (không lắng nghe
+  // từng thẻ) nên KHÔNG BAO GIỜ có nguy cơ vượt giới hạn dung lượng Firestore
+  // dù bộ thẻ có bao nhiêu nghìn thẻ đi nữa.
+  // Lưu ý: sửa/thêm/xóa TỪNG THẺ ở thiết bị khác sẽ được tải về đầy đủ vào
+  // lần MỞ APP/ĐĂNG NHẬP tiếp theo trên máy này, nhưng sẽ KHÔNG tự đẩy sang
+  // ngay lập tức nếu máy này đang mở sẵn app cùng lúc (đánh đổi để đơn giản
+  // hoá và tránh phải theo dõi hàng chục nghìn thẻ cùng lúc theo thời gian
+  // thực - nếu cần, có thể bổ sung sau).
   unsubscribeSnapshot = onSnapshot(
-    firestoreDocRef,
+    metaRef,
     (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
 
       // _syncId trùng với lần ghi gần nhất của CHÍNH máy này -> đây chỉ là
-      // xác nhận (ack) của thao tác vừa lưu, không phải thay đổi từ nơi
-      // khác -> bỏ qua để tránh tự reset về thẻ đầu tiên khi đang xem dở
-      if (data._syncId && data._syncId === lastWriteId) return;
+      // xác nhận (ack) của thao tác vừa lưu, không phải thay đổi từ nơi khác
+      if (data._syncId && data._syncId === lastMetaWriteId) return;
       if (snap.metadata.hasPendingWrites) return;
 
-      applyRemoteState(data);
+      const deckOrder = Array.isArray(data.deckOrder) ? data.deckOrder : [];
+      if (deckOrder.length === 0) return; // dữ liệu rỗng bất thường - xem giải thích ở trên, bỏ qua
+
+      fetchDecksByIds(user.uid, deckOrder)
+        .then((remoteDecks) => {
+          const suspiciousCount = applyRemoteFullState({ activeDeckId: data.activeDeckId, decks: remoteDecks });
+          if (suspiciousCount > 0) {
+            showSyncStatus(
+              `⚠️ ${suspiciousCount} bộ thẻ tải về bị rỗng bất thường - đã giữ nguyên dữ liệu cũ cho (các) bộ đó.`,
+              true
+            );
+          }
+        })
+        .catch((error) => {
+          console.warn("Lỗi tải lại dữ liệu sau khi phát hiện thay đổi từ thiết bị khác:", error);
+        });
     },
     (error) => {
       console.warn("Mất kết nối đồng bộ Firestore:", error);
