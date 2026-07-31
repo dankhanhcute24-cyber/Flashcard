@@ -1100,14 +1100,31 @@ const FIREBASE_SDK_VERSION = "10.12.2";
 // unsubscribeSnapshot/firebaseReady/lastWriteId đã được khai báo sớm hơn ở
 // phần "TRẠNG THÁI ĐỒNG BỘ FIREBASE" phía trên, ngay trước loadAppState())
 
+// Đếm tổng số thẻ trong TOÀN BỘ các bộ thẻ - dùng để phát hiện dữ liệu tải
+// từ Firestore về "rỗng bất thường" (0 thẻ) trong khi máy đang có thẻ thật,
+// để tránh ghi đè nhầm khi đồng bộ lỗi/dở dang (xem applyRemoteState bên dưới).
+function countTotalCards(decks) {
+  if (!Array.isArray(decks)) return 0;
+  return decks.reduce((sum, deck) => sum + (Array.isArray(deck.cards) ? deck.cards.length : 0), 0);
+}
+
 let syncStatusHideTimer = null;
-function showSyncStatus(text) {
+// persistent = true -> thông báo LỖI, không tự ẩn (để chắc chắn người dùng
+// nhìn thấy), chỉ biến mất khi có 1 lần showSyncStatus khác gọi đè lên.
+// persistent = false (mặc định) -> thông báo tiến trình/thành công bình
+// thường, tự ẩn sau 2.5 giây như trước.
+function showSyncStatus(text, persistent = false) {
   syncStatusEl.textContent = text;
   syncStatusEl.hidden = false;
-  if (syncStatusHideTimer) clearTimeout(syncStatusHideTimer);
-  syncStatusHideTimer = setTimeout(() => {
-    syncStatusEl.hidden = true;
-  }, 2500);
+  if (syncStatusHideTimer) {
+    clearTimeout(syncStatusHideTimer);
+    syncStatusHideTimer = null;
+  }
+  if (!persistent) {
+    syncStatusHideTimer = setTimeout(() => {
+      syncStatusEl.hidden = true;
+    }, 2500);
+  }
 }
 
 // Ghi state hiện tại lên Firestore (bỏ qua nếu chưa đăng nhập/Firebase chưa sẵn sàng)
@@ -1127,7 +1144,7 @@ function writeStateToCloud(state) {
     .then(() => showSyncStatus("☁️ Đã đồng bộ"))
     .catch((error) => {
       console.warn("Lỗi đồng bộ lên Firestore:", error);
-      showSyncStatus("⚠️ Chưa đồng bộ được lên đám mây");
+      showSyncStatus("⚠️ Chưa đồng bộ được lên đám mây - thay đổi mới nhất hiện chỉ lưu trên máy này.", true);
     });
 }
 
@@ -1135,9 +1152,34 @@ function writeStateToCloud(state) {
 // thiết bị khác vừa thay đổi dữ liệu). Không gọi speakCurrentWord() ở đây vì
 // việc dữ liệu bất chợt cập nhật (do thiết bị khác) không nên tự phát âm thanh.
 function applyRemoteState(data) {
+  const incomingDecks = Array.isArray(data.decks) ? data.decks : [];
+
+  // CHỐT AN TOÀN: nếu dữ liệu tải về có 0 thẻ trong TẤT CẢ các bộ, trong khi
+  // máy này ĐANG có thẻ thật (currentCardCount > 0) -> rất có thể đây là dữ
+  // liệu bị lỗi/đọc dở dang (mất mạng giữa chừng, tài liệu Firestore chưa ghi
+  // xong, quyền truy cập bị từ chối nhưng vẫn trả về rỗng thay vì báo lỗi...),
+  // KHÔNG PHẢI người dùng thật sự đã xóa hết thẻ ở thiết bị khác. Trường hợp
+  // đó mà vẫn ghi đè thì coi như mất trắng dữ liệu đang xem trên máy này ->
+  // từ chối áp dụng, giữ nguyên dữ liệu hiện có và báo lỗi rõ ràng thay vì
+  // âm thầm xóa hết thẻ trên giao diện.
+  const incomingCardCount = countTotalCards(incomingDecks);
+  const currentCardCount = countTotalCards(appState.decks);
+
+  if (incomingCardCount === 0 && currentCardCount > 0) {
+    console.warn(
+      "Dữ liệu tải từ Firestore rỗng bất thường (0 thẻ) trong khi máy đang có thẻ - đã BỎ QUA để tránh mất dữ liệu.",
+      data
+    );
+    showSyncStatus(
+      "⚠️ Dữ liệu đồng bộ tải về bị rỗng bất thường - đã giữ nguyên các thẻ hiện có trên máy này, KHÔNG ghi đè.",
+      true
+    );
+    return;
+  }
+
   appState = {
     activeDeckId: data.activeDeckId,
-    decks: Array.isArray(data.decks) ? data.decks : []
+    decks: incomingDecks
   };
 
   if (!getActiveDeck() && appState.decks.length > 0) {
@@ -1189,21 +1231,41 @@ async function handleAuthChange(user) {
 
   try {
     const snap = await getDoc(firestoreDocRef);
-    const data = snap.exists() ? snap.data() : null;
 
-    if (data && Array.isArray(data.decks) && data.decks.length > 0) {
-      // Tài khoản này đã có dữ liệu trên đám mây (ví dụ đã đăng nhập từ máy
-      // khác trước đó) -> tải về, thay thế dữ liệu đang có trên máy này
-      applyRemoteState(data);
-    } else {
-      // Lần đầu đăng nhập bằng tài khoản này, đám mây chưa có gì -> đẩy dữ
-      // liệu hiện có trên máy này (kể cả bộ thẻ mẫu) lên làm dữ liệu gốc
+    if (!snap.exists()) {
+      // Tài khoản này CHƯA TỪNG đồng bộ (chắc chắn, không phải do lỗi đọc -
+      // getDoc ném lỗi ở catch bên dưới nếu có sự cố) -> đẩy dữ liệu hiện có
+      // trên máy này (kể cả bộ thẻ mẫu) lên làm dữ liệu gốc trên đám mây
       writeStateToCloud(appState);
+      showSyncStatus("☁️ Đã đồng bộ");
+    } else {
+      const data = snap.data();
+      const cloudCardCount = countTotalCards(data.decks);
+
+      if (cloudCardCount > 0) {
+        // Đám mây đã có dữ liệu thật (ví dụ đã đăng nhập từ máy khác trước
+        // đó) -> tải về, thay thế dữ liệu đang có trên máy này
+        applyRemoteState(data);
+        showSyncStatus("☁️ Đã đồng bộ");
+      } else {
+        // Tài liệu Firestore TỒN TẠI nhưng không có thẻ nào - không chắc đây
+        // là "tài khoản chưa có dữ liệu" (có thể do lỗi ghi dở dang từ trước).
+        // KHÔNG tự động ghi đè theo bất kỳ hướng nào (không tải xuống app,
+        // cũng không đẩy dữ liệu máy này lên đè lên đám mây) - chỉ báo cho
+        // biết và giữ nguyên dữ liệu hiện có, an toàn nhất cho cả 2 phía.
+        console.warn("Tài liệu Firestore tồn tại nhưng rỗng (0 thẻ) - bỏ qua để tránh ghi đè/mất dữ liệu.", data);
+        showSyncStatus(
+          "⚠️ Dữ liệu đám mây đang trống bất thường - đã giữ nguyên dữ liệu trên máy này, chưa đồng bộ.",
+          true
+        );
+      }
     }
-    showSyncStatus("☁️ Đã đồng bộ");
   } catch (error) {
     console.warn("Lỗi tải dữ liệu từ Firestore:", error);
-    showSyncStatus("⚠️ Không tải được dữ liệu đám mây - đang dùng dữ liệu trên máy");
+    showSyncStatus(
+      "⚠️ Không tải được dữ liệu đám mây (mất mạng hoặc hết phiên đăng nhập) - đang dùng dữ liệu trên máy, chưa đồng bộ.",
+      true
+    );
   }
 
   // Lắng nghe thay đổi xảy ra trên CÁC THIẾT BỊ KHÁC (đăng nhập cùng tài
@@ -1224,6 +1286,10 @@ async function handleAuthChange(user) {
     },
     (error) => {
       console.warn("Mất kết nối đồng bộ Firestore:", error);
+      showSyncStatus(
+        "⚠️ Mất kết nối đồng bộ - dữ liệu trên máy vẫn được giữ nguyên, sẽ tự đồng bộ lại khi có mạng.",
+        true
+      );
     }
   );
 }
