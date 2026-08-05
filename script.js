@@ -367,6 +367,80 @@ function fitCardText() {
   }
 }
 
+// ------------------------------------------------------------
+// CHỌN GIỌNG ĐỌC TIẾNG TRUNG
+//
+// TRƯỚC ĐÂY: chỉ set utterance.lang = "zh-CN", KHÔNG chỉ định utterance.voice
+// cụ thể -> trình duyệt/hệ điều hành tự chọn "giọng mặc định cho zh-CN", và
+// giọng mặc định này KHÁC NHAU giữa các thiết bị (Windows/macOS/Android/iOS
+// đều có bộ giọng TTS riêng), thậm chí có thể đổi sau khi trình duyệt/hệ điều
+// hành cập nhật - đây là lý do "giọng đọc tự đổi khác so với trước", KHÔNG
+// phải do gọi API bên thứ 3 (Web Speech API chạy hoàn toàn phía trình duyệt).
+//
+// BÂY GIỜ: dò theo 1 DANH SÁCH ƯU TIÊN các giọng tiếng Trung phổ biến, xếp
+// theo từng nền tảng - thử lần lượt cho tới khi tìm được giọng máy THỰC SỰ
+// CÓ. Không giọng nào trong danh sách khớp thì mới rơi về bất kỳ giọng zh-CN
+// nào máy có, rồi mới tới bất kỳ giọng tiếng Trung nào (zh-TW, zh-HK...), và
+// CHỈ khi không còn lựa chọn nào mới để trình duyệt tự chọn mặc định như cũ.
+// Luôn log rõ giọng thực tế đã chọn ra console - để việc "rơi về mặc định"
+// (nếu có) LUÔN nhìn thấy được, không im lặng trôi qua.
+// ------------------------------------------------------------
+
+const PREFERRED_ZH_VOICE_NAMES = [
+  // Windows (Edge/Chrome) - giọng "Online (Natural)" đời mới, cần mạng nhưng chất lượng tốt nhất
+  "Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)",
+  "Microsoft Yunxi Online (Natural) - Chinese (Mainland)",
+  // Windows - giọng desktop cài sẵn offline, không cần mạng
+  "Microsoft Huihui Desktop - Chinese (Simplified)",
+  "Microsoft Kangkang Desktop - Chinese (Simplified)",
+  "Microsoft Yaoyao",
+  // macOS / iOS (Safari) - giọng tiếng Trung phổ thông chuẩn của Apple
+  "Tingting",
+  "Ting-Ting",
+  // Android / ChromeOS / Chrome nói chung (đăng nhập Google TTS) - giọng phổ thông Trung Quốc đại lục
+  "Google 普通话（中国大陆）",
+  "Google Chinese (China)"
+];
+
+let cachedVoices = [];
+function refreshVoiceList() {
+  if ("speechSynthesis" in window) {
+    cachedVoices = window.speechSynthesis.getVoices();
+  }
+}
+
+if ("speechSynthesis" in window) {
+  refreshVoiceList();
+  // QUAN TRỌNG: nhiều trình duyệt (đặc biệt Chrome) nạp danh sách giọng đọc
+  // BẤT ĐỒNG BỘ - lần gọi getVoices() đầu tiên ngay lúc tải trang thường trả
+  // về mảng RỖNG dù máy có sẵn giọng tiếng Trung. Phải lắng nghe sự kiện
+  // "voiceschanged" để cập nhật lại khi danh sách thật sự đã sẵn sàng - nếu
+  // bỏ qua bước này, app sẽ luôn "âm thầm" rơi về giọng mặc định dù giọng
+  // mong muốn thực ra có tồn tại trên máy, chỉ là chưa kịp nạp xong.
+  window.speechSynthesis.onvoiceschanged = refreshVoiceList;
+}
+
+let loggedVoiceChoiceOnce = false;
+
+// Trả về 1 SpeechSynthesisVoice phù hợp nhất máy hiện có, hoặc null nếu nên
+// để trình duyệt tự chọn mặc định (xem PREFERRED_ZH_VOICE_NAMES ở trên)
+function pickChineseVoice() {
+  if (cachedVoices.length === 0) refreshVoiceList(); // thử lại phòng khi "voiceschanged" chưa kịp bắn
+
+  for (const preferredName of PREFERRED_ZH_VOICE_NAMES) {
+    const match = cachedVoices.find((v) => v.name.toLowerCase().includes(preferredName.toLowerCase()));
+    if (match) return match;
+  }
+
+  const exactZhCN = cachedVoices.find((v) => v.lang === "zh-CN");
+  if (exactZhCN) return exactZhCN;
+
+  const anyChinese = cachedVoices.find((v) => v.lang && v.lang.toLowerCase().startsWith("zh"));
+  if (anyChinese) return anyChinese;
+
+  return null;
+}
+
 // Đọc to từ tiếng Trung bằng giọng đọc có sẵn của trình duyệt
 function speakCurrentWord() {
   if (cards.length === 0) return;
@@ -375,6 +449,23 @@ function speakCurrentWord() {
   const text = cards[currentIndex].hanzi;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
+
+  const voice = pickChineseVoice();
+  if (voice) {
+    utterance.voice = voice;
+  }
+
+  // Chỉ log 1 lần (không phải mỗi lần đọc từ) để không rác console, nhưng đủ
+  // để kiểm tra được giọng thực tế đang dùng trên từng thiết bị (mở DevTools
+  // Console, bấm "Đọc lại" 1 lần, xem dòng log này)
+  if (!loggedVoiceChoiceOnce) {
+    loggedVoiceChoiceOnce = true;
+    console.log(
+      voice
+        ? `[TTS] Đang dùng giọng: "${voice.name}" (${voice.lang})`
+        : `[TTS] Không tìm thấy giọng tiếng Trung nào phù hợp trên thiết bị này trong ${cachedVoices.length} giọng có sẵn - dùng giọng mặc định của trình duyệt cho "zh-CN".`
+    );
+  }
 
   window.speechSynthesis.cancel(); // dừng giọng đọc đang phát (nếu có) trước khi đọc câu mới
   window.speechSynthesis.speak(utterance);
@@ -1141,6 +1232,41 @@ function cardDocId(index) {
   return String(index);
 }
 
+// Ghi appState xuống localStorage (KHÔNG đụng gì tới Firestore) - dùng ở
+// những chỗ chỉ cần lưu cục bộ 1 thay đổi nhỏ (ví dụ đánh dấu 1 bộ "đã từng
+// đồng bộ thành công"), tránh lặp lại cùng 1 đoạn try/catch nhiều nơi.
+function persistLocalStorageOnly() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+  } catch (error) {
+    // Bỏ qua - đây chỉ là lưu cache cục bộ, dữ liệu gốc vẫn còn trên Firestore
+  }
+  updateStorageWarning(appState);
+}
+
+// Đánh dấu 1 bộ thẻ là "đã đồng bộ khớp" SAU KHI xác nhận ghi/đọc thành công
+// (KHÔNG BAO GIỜ gọi hàm này TRƯỚC khi có xác nhận, để tránh đánh dấu lạc
+// quan/race condition). "syncedOnce" là cờ BỀN (lưu trong appState, xuống cả
+// localStorage) đánh dấu "bộ thẻ này CHẮC CHẮN đã từng tồn tại thật trên
+// Firestore" - dùng để phân biệt "bộ mới tạo, chưa kịp đồng bộ" (chưa có cờ)
+// với "bộ đã bị xóa ở thiết bị khác" (đã từng có cờ, giờ biến mất khỏi
+// deckOrder) trong applyRemoteFullState() bên dưới - xem giải thích ở đó.
+function markDeckSynced(deck) {
+  lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+  pendingRetryDeckIds.delete(deck.id);
+  if (!deck.syncedOnce) {
+    deck.syncedOnce = true;
+    persistLocalStorageOnly();
+  }
+}
+
+// Các bộ thẻ ĐANG CẦN thử ghi lại lên Firestore (lần ghi trước thất bại giữa
+// chừng, hoặc lúc tải về phát hiện dữ liệu trên đám mây "dở dang" so với máy
+// này) - xem retryPendingDeckSyncs() bên dưới. Không cần lưu bền qua lần tải
+// lại trang: nếu tải lại trang mà vẫn còn dở dang, lần đồng bộ đầy đủ tiếp
+// theo (handleAuthChange) sẽ tự phát hiện lại và thêm vào đây.
+const pendingRetryDeckIds = new Set();
+
 let syncStatusHideTimer = null;
 // persistent = true -> thông báo LỖI, không tự ẩn (để chắc chắn người dùng
 // nhìn thấy), chỉ biến mất khi có 1 lần showSyncStatus khác gọi đè lên.
@@ -1181,8 +1307,12 @@ function writeMetaToCloud() {
 }
 
 // Ghi 1 BỘ THẺ lên Firestore: document tên bộ + MỖI THẺ 1 document riêng
-// trong subcollection "cards" (đánh số theo vị trí trong mảng). Trả về
-// true/false để nơi gọi biết có nên cập nhật bộ nhớ đệm lastSyncedCardsJSON hay không.
+// trong subcollection "cards" (đánh số theo vị trí trong mảng), rồi đóng dấu
+// "cardCount" (số thẻ THỰC SỰ đã ghi xong) lên document bộ thẻ - CHỈ đóng dấu
+// này SAU KHI toàn bộ quá trình (mọi đợt ghi thẻ + dọn thẻ dư) đã thành công.
+// "cardCount" chính là cách để lần đọc SAU (fetchDecksByIds) biết được dữ
+// liệu trên Firestore có ĐANG GHI DỞ DANG hay không - xem giải thích ở đó.
+// Trả về true/false để nơi gọi biết có nên cập nhật lastSyncedCardsJSON hay không.
 async function writeDeckToCloud(deck) {
   if (!firebaseReady || !currentUser || !firestoreFns) return false;
 
@@ -1195,8 +1325,12 @@ async function writeDeckToCloud(deck) {
   showSyncStatus("⏳ Đang đồng bộ...");
 
   try {
+    // merge: true - CHƯA đụng tới field "cardCount" (nếu có từ lần đồng bộ
+    // trước) ở bước này. Nhờ vậy, nếu quá trình bên dưới thất bại giữa chừng,
+    // "cardCount" cũ (nếu có) vẫn còn nguyên và sẽ KHÔNG khớp với số document
+    // thẻ thực tế lúc này -> lần đọc sau tự phát hiện được là dữ liệu dở dang.
     const metaBatch = writeBatch(firebaseDb);
-    metaBatch.set(deckRef, { name: deck.name });
+    metaBatch.set(deckRef, { name: deck.name }, { merge: true });
     await metaBatch.commit();
 
     // Ghi từng đợt tối đa FIRESTORE_BATCH_CHUNK_SIZE thẻ, TUẦN TỰ (đợt sau
@@ -1235,14 +1369,27 @@ async function writeDeckToCloud(deck) {
       await batch.commit();
     }
 
+    // MỌI bước ở trên đã thành công -> giờ mới đóng dấu "hoàn tất" với đúng
+    // số thẻ thực tế. Đây là bước CUỐI CÙNG, cố tình tách riêng để nếu chính
+    // bước đóng dấu này lỡ thất bại (hiếm), lần đọc sau vẫn coi là dở dang
+    // (an toàn hơn là đóng dấu nhầm "xong" khi chưa chắc chắn).
+    const stampBatch = writeBatch(firebaseDb);
+    stampBatch.set(deckRef, { name: deck.name, cardCount: totalCards }, { merge: true });
+    await stampBatch.commit();
+
+    markDeckSynced(deck);
     showSyncStatus("☁️ Đã đồng bộ");
     return true;
   } catch (error) {
     console.warn(`Lỗi đồng bộ bộ thẻ "${deck.name}" lên Firestore:`, error);
+    // Đánh dấu bộ này ĐANG CẦN thử ghi lại - retryPendingDeckSyncs() sẽ tự
+    // động thử lại khi có mạng trở lại (sự kiện "online") hoặc theo chu kỳ,
+    // KHÔNG cần người dùng phải tự sửa 1 thẻ nào đó để "kích hoạt" nữa.
+    pendingRetryDeckIds.add(deck.id);
     showSyncStatus(
       `⚠️ Đồng bộ bộ "${deck.name}" thất bại giữa chừng: đã ghi được ${writtenCount}/${totalCards} thẻ lên đám mây, ` +
         `còn ${totalCards - writtenCount} thẻ chưa đồng bộ. Dữ liệu trên máy này vẫn giữ nguyên đầy đủ, không mất gì - ` +
-        `hãy thử lại khi có mạng ổn định (sửa rồi lưu lại 1 thẻ bất kỳ trong bộ này để kích hoạt đồng bộ lại).`,
+        `app sẽ tự thử đồng bộ lại khi có mạng ổn định.`,
       true
     );
     return false;
@@ -1267,10 +1414,54 @@ async function deleteDeckFromCloud(deckId, deckName) {
     }
     await deleteDoc(deckRef);
     delete lastSyncedCardsJSON[deckId];
+    pendingRetryDeckIds.delete(deckId);
   } catch (error) {
     console.warn(`Lỗi xóa bộ thẻ "${deckName}" trên Firestore:`, error);
     showSyncStatus(`⚠️ Xóa bộ "${deckName}" trên đám mây thất bại - có thể cần thử lại khi có mạng.`, true);
   }
+}
+
+// Thử ghi lại các bộ thẻ đang nằm trong "hàng chờ" pendingRetryDeckIds (lần
+// ghi/đọc trước phát hiện dở dang - xem writeDeckToCloud/applyRemoteFullState)
+// lên Firestore. Gọi khi: (1) trình duyệt báo có mạng trở lại (sự kiện
+// "online"), (2) định kỳ mỗi ít phút làm lưới an toàn (phòng khi sự kiện
+// "online" không bắn ra dù thực ra kết nối đã ổn - ví dụ vẫn nối wifi nhưng
+// wifi đó mất Internet rồi có lại), (3) ngay sau khi vừa phát hiện ra dữ liệu
+// khả nghi. Không cần người dùng phải tự làm gì (sửa 1 thẻ...) để "kích hoạt"
+// nữa như phiên bản trước.
+let retryInFlight = false;
+async function retryPendingDeckSyncs() {
+  if (retryInFlight) return; // tránh chạy chồng nhiều lần cùng lúc (sự kiện online + interval trùng thời điểm)
+  if (pendingRetryDeckIds.size === 0) return;
+  if (!firebaseReady || !currentUser || !firestoreFns) return;
+
+  retryInFlight = true;
+  try {
+    for (const deckId of [...pendingRetryDeckIds]) {
+      const deck = appState.decks.find((d) => d.id === deckId);
+      if (!deck) {
+        // Bộ đã không còn trên máy này nữa (ví dụ người dùng tự xóa trong
+        // lúc chờ) - không cần thử lại nữa
+        pendingRetryDeckIds.delete(deckId);
+        continue;
+      }
+      await writeDeckToCloud(deck); // tự xóa khỏi pendingRetryDeckIds bên trong nếu lần này thành công
+    }
+  } finally {
+    retryInFlight = false;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    if (pendingRetryDeckIds.size === 0) return;
+    showSyncStatus("🌐 Đã có mạng trở lại - đang thử đồng bộ lại phần còn thiếu...");
+    retryPendingDeckSyncs();
+  });
+
+  // Lưới an toàn định kỳ - phòng khi sự kiện "online" của trình duyệt không
+  // đáng tin cậy 100% (ví dụ mất Internet nhưng vẫn nối wifi nội bộ)
+  setInterval(retryPendingDeckSyncs, 60000);
 }
 
 // Đồng bộ bộ thẻ ĐANG XEM lên Firestore (gọi từ saveAppState() ở trên, sau
@@ -1300,14 +1491,20 @@ function syncActiveDeckToCloud() {
   const cardsJSON = JSON.stringify(deck.cards);
   if (lastSyncedCardsJSON[deck.id] === cardsJSON) return;
 
-  writeDeckToCloud(deck).then((ok) => {
-    if (ok) lastSyncedCardsJSON[deck.id] = cardsJSON;
-  });
+  writeDeckToCloud(deck); // tự đánh dấu markDeckSynced() bên trong nếu thành công
 }
 
 // Tải danh sách bộ thẻ (theo đúng id trong deckOrder) kèm TOÀN BỘ thẻ của
 // từng bộ từ Firestore về. Dùng chung cho cả lúc đăng nhập và lúc phát hiện
 // thay đổi từ thiết bị khác.
+//
+// Mỗi bộ trả về kèm cờ "inconsistent": true nếu số document thẻ đọc được
+// KHÔNG khớp với "cardCount" đã đóng dấu trên document bộ thẻ (xem
+// writeDeckToCloud) - nghĩa là lần ghi gần nhất lên Firestore (từ BẤT KỲ
+// thiết bị nào) đã DỞ DANG, dữ liệu hiện KHÔNG đáng tin cậy 100%. Bộ thẻ nào
+// chưa từng được ghi bằng phiên bản code có "cardCount" (dữ liệu cũ, đồng bộ
+// từ trước khi có cơ chế này) thì không có gì để so sánh - coi như bình
+// thường, không báo nghi ngờ (tránh báo nhầm hàng loạt cho dữ liệu cũ).
 async function fetchDecksByIds(uid, deckIds) {
   const { doc, getDoc, collection, getDocs } = firestoreFns;
   const decks = [];
@@ -1317,13 +1514,17 @@ async function fetchDecksByIds(uid, deckIds) {
     const deckSnap = await getDoc(deckRef);
     if (!deckSnap.exists()) continue; // tham chiếu cũ tới bộ đã bị xóa - bỏ qua
 
+    const deckData = deckSnap.data();
     const cardsSnap = await getDocs(collection(deckRef, "cards"));
     const cards = cardsSnap.docs
       .slice()
       .sort((a, b) => Number(a.id) - Number(b.id))
       .map((d) => d.data());
 
-    decks.push({ id: deckId, name: deckSnap.data().name || deckId, cards });
+    const declaredCount = deckData.cardCount;
+    const inconsistent = typeof declaredCount === "number" && declaredCount !== cards.length;
+
+    decks.push({ id: deckId, name: deckData.name || deckId, cards, inconsistent });
   }
 
   return decks;
@@ -1332,39 +1533,83 @@ async function fetchDecksByIds(uid, deckIds) {
 // Áp dụng dữ liệu tải từ Firestore vào app (khi vừa đăng nhập, hoặc khi một
 // thiết bị khác vừa thay đổi dữ liệu). Không gọi speakCurrentWord() ở đây vì
 // việc dữ liệu bất chợt cập nhật (do thiết bị khác) không nên tự phát âm
-// thanh. Trả về số bộ thẻ bị coi là "rỗng bất thường" (nếu > 0, nơi gọi nên
-// báo cho người dùng biết).
+// thanh. Trả về số bộ thẻ bị coi là "khả nghi" (rỗng bất thường HOẶC dở
+// dang) - nếu > 0, nơi gọi nên báo cho người dùng biết.
 function applyRemoteFullState(remote) {
   const localDecksById = new Map(appState.decks.map((deck) => [deck.id, deck]));
   let suspiciousCount = 0;
 
-  // CHỐT AN TOÀN THEO TỪNG BỘ THẺ RIÊNG LẺ: nếu 1 bộ cụ thể tải về có 0 thẻ
-  // trong khi máy này ĐANG có thẻ thật cho đúng bộ đó -> rất có thể là dữ
-  // liệu lỗi/ghi dở dang (ví dụ lần ghi trước đó thất bại giữa chừng do vượt
-  // giới hạn dung lượng hoặc mất mạng) - KHÔNG PHẢI người dùng thật sự đã xóa
-  // hết thẻ của bộ đó ở thiết bị khác. Trường hợp này: GIỮ NGUYÊN dữ liệu của
-  // RIÊNG bộ đó trên máy này, các bộ KHÁC vẫn cập nhật bình thường - đây
-  // chính là kiểu lỗi đã xảy ra với bộ HSK6 trước đây.
+  // CHỐT AN TOÀN THEO TỪNG BỘ THẺ RIÊNG LẺ - áp dụng cho 2 kiểu dữ liệu khả
+  // nghi (xem VẤN ĐỀ 1 và 2 đã điều tra):
+  //   (a) remote CÓ 0 thẻ trong khi máy đang có thẻ thật cho đúng bộ đó
+  //   (b) remote "inconsistent" (số thẻ đọc được KHÔNG khớp "cardCount" đã
+  //       đóng dấu - nghĩa là 1 lần ghi trước đó, từ 1 thiết bị BẤT KỲ, đã
+  //       dở dang) - đây chính là kiểu lỗi khiến "mất hơn 1000/10000+ thẻ":
+  //       máy A ghi dở dang do mất mạng, máy B tải về đúng phần dở dang đó
+  //       tưởng là dữ liệu thật rồi ghi đè lên bản đầy đủ của máy B.
+  // Cả 2 trường hợp: GIỮ NGUYÊN dữ liệu của RIÊNG bộ đó trên máy này (nếu máy
+  // đang có dữ liệu), các bộ KHÁC vẫn cập nhật bình thường, đồng thời đưa bộ
+  // đó vào hàng chờ để TỰ ĐỘNG thử ghi lại đầy đủ lên Firestore khi có mạng
+  // ổn định (retryPendingDeckSyncs) - không cần người dùng tự làm gì thêm.
   const safeDecks = remote.decks.map((remoteDeck) => {
     const localDeck = localDecksById.get(remoteDeck.id);
     const remoteCardCount = Array.isArray(remoteDeck.cards) ? remoteDeck.cards.length : 0;
+    const isEmptyButLocalHasData = remoteCardCount === 0 && localDeck && localDeck.cards.length > 0;
+    const isInconsistent = remoteDeck.inconsistent === true;
 
-    if (remoteCardCount === 0 && localDeck && localDeck.cards.length > 0) {
+    if (isEmptyButLocalHasData || isInconsistent) {
       suspiciousCount++;
-      console.warn(
-        `Bộ thẻ "${remoteDeck.name}" tải từ Firestore về rỗng (0 thẻ) trong khi máy này đang có ${localDeck.cards.length} thẻ - đã giữ nguyên dữ liệu của bộ này trên máy, không ghi đè.`
-      );
-      return localDeck;
+      if (localDeck) {
+        console.warn(
+          isInconsistent
+            ? `Bộ thẻ "${remoteDeck.name}" tải từ Firestore về KHÔNG khớp số thẻ đã đóng dấu (dữ liệu dở dang, có thể do 1 thiết bị khác ghi bị gián đoạn) - đã giữ nguyên ${localDeck.cards.length} thẻ trên máy này, không ghi đè, sẽ tự đồng bộ lại khi có mạng.`
+            : `Bộ thẻ "${remoteDeck.name}" tải từ Firestore về rỗng (0 thẻ) trong khi máy này đang có ${localDeck.cards.length} thẻ - đã giữ nguyên dữ liệu của bộ này trên máy, không ghi đè.`
+        );
+        pendingRetryDeckIds.add(remoteDeck.id); // để dữ liệu ĐẦY ĐỦ của máy này được đẩy lại lên khi có mạng
+        return localDeck;
+      }
+      // Máy này chưa từng có bộ này (ví dụ thiết bị mới) -> không có gì để
+      // giữ thay thế, đành áp dụng tạm dữ liệu khả nghi này (còn hơn không
+      // có gì), nhưng vẫn báo rõ để người dùng biết có thể chưa đầy đủ.
+      console.warn(`Bộ thẻ "${remoteDeck.name}" có thể chưa đồng bộ đầy đủ trên đám mây - đã tải tạm, sẽ tự kiểm tra lại.`);
     }
     return remoteDeck;
   });
 
-  // Bộ thẻ nào có trên máy này nhưng CHƯA từng xuất hiện trên đám mây (ví dụ
-  // vừa tạo lúc mất mạng, chưa kịp đồng bộ) -> giữ lại, không để mất, và
-  // tranh thủ đẩy lên đám mây luôn trong lần đồng bộ này.
+  // Mọi bộ vừa xác nhận TỒN TẠI THẬT trên Firestore (dù nội dung có khả nghi
+  // hay không) đều được đánh dấu syncedOnce - để nếu SAU NÀY nó biến mất
+  // khỏi deckOrder, ta biết chắc đó là bị XÓA thật, không phải "chưa kịp
+  // đồng bộ" (xem đoạn phân loại newLocalOnlyDecks ngay bên dưới).
+  // QUAN TRỌNG: phải đánh dấu trên object THỰC SỰ nằm trong safeDecks (object
+  // đó có thể là remoteDeck HOẶC localDeck tùy nhánh khả nghi ở trên) - không
+  // phải trên localDeck gốc, nếu không sẽ đánh dấu nhầm lên 1 object đã bị
+  // thay thế/loại bỏ, không có tác dụng gì.
+  remote.decks.forEach((remoteDeck) => {
+    const finalDeck = safeDecks.find((d) => d.id === remoteDeck.id);
+    if (finalDeck) finalDeck.syncedOnce = true;
+  });
+
+  // Bộ thẻ có trên máy này nhưng KHÔNG có trong danh sách remote.decks lần
+  // này - có 2 khả năng hoàn toàn khác nhau, phải phân biệt rõ:
+  //   (a) deck.syncedOnce chưa từng bật -> THẬT SỰ mới tạo, chưa kịp đồng bộ
+  //       lần nào -> giữ lại trên máy này, tranh thủ đẩy lên đám mây.
+  //   (b) deck.syncedOnce đã bật (đã từng được xác nhận tồn tại thật trên
+  //       Firestore ở 1 lần đồng bộ TRƯỚC ĐÓ) -> giờ không còn trong
+  //       deckOrder nữa -> ĐÃ BỊ XÓA Ở THIẾT BỊ KHÁC -> xóa theo ở máy này,
+  //       TUYỆT ĐỐI KHÔNG đẩy lại lên (đây chính là nguyên nhân khiến "bộ
+  //       thẻ đã xóa tự động xuất hiện trở lại" trước đây).
   const remoteIds = new Set(remote.decks.map((deck) => deck.id));
-  const localOnlyDecks = appState.decks.filter((deck) => !remoteIds.has(deck.id));
-  const finalDecks = [...safeDecks, ...localOnlyDecks];
+  const newLocalOnlyDecks = [];
+  appState.decks.forEach((deck) => {
+    if (remoteIds.has(deck.id)) return;
+    if (deck.syncedOnce) {
+      console.warn(`Bộ thẻ "${deck.name}" đã bị xóa ở thiết bị khác - đồng bộ theo, bỏ khỏi máy này.`);
+    } else {
+      newLocalOnlyDecks.push(deck);
+    }
+  });
+
+  const finalDecks = [...safeDecks, ...newLocalOnlyDecks];
 
   appState = {
     activeDeckId:
@@ -1380,30 +1625,28 @@ function applyRemoteFullState(remote) {
   currentIndex = 0;
   isFlipped = false;
 
-  // Đánh dấu các bộ vừa áp dụng nguyên vẹn từ đám mây là "đã khớp đồng bộ",
-  // để nếu người dùng chỉ chuyển sang xem 1 bộ lớn ngay sau khi đăng nhập,
-  // syncActiveDeckToCloud() không ghi lại vô ích toàn bộ thẻ của bộ đó.
+  // Đánh dấu các bộ ĐÁNG TIN CẬY (không nằm trong danh sách khả nghi ở trên)
+  // là "đã khớp đồng bộ", để nếu người dùng chỉ chuyển sang xem 1 bộ lớn
+  // ngay sau khi đăng nhập, syncActiveDeckToCloud() không ghi lại vô ích
+  // toàn bộ thẻ của bộ đó. Bộ khả nghi thì CỐ TÌNH không đánh dấu ở đây -
+  // pendingRetryDeckIds đã lo phần tự đồng bộ lại cho chúng.
   finalDecks.forEach((deck) => {
-    lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+    if (!pendingRetryDeckIds.has(deck.id)) {
+      lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+    }
   });
 
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-  } catch (error) {
-    // Bỏ qua - dữ liệu vẫn còn nguyên trên Firestore, không mất gì
-  }
-  updateStorageWarning(appState);
-
+  persistLocalStorageOnly();
   renderDeckSelect();
   renderCard();
 
-  if (localOnlyDecks.length > 0) {
-    localOnlyDecks.forEach((deck) => {
-      writeDeckToCloud(deck).then((ok) => {
-        if (ok) lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
-      });
-    });
+  if (newLocalOnlyDecks.length > 0) {
+    newLocalOnlyDecks.forEach((deck) => writeDeckToCloud(deck)); // tự markDeckSynced() bên trong nếu thành công
     writeMetaToCloud();
+  }
+
+  if (pendingRetryDeckIds.size > 0) {
+    retryPendingDeckSyncs(); // thử ngay (ví dụ mạng thực ra vẫn ổn, chỉ là lần đọc trước đó gặp bản dở dang)
   }
 
   return suspiciousCount;
@@ -1445,8 +1688,7 @@ async function handleAuthChange(user) {
       // hiện có trên máy này (mọi bộ thẻ, kể cả bộ mẫu) lên làm dữ liệu gốc
       writeMetaToCloud();
       for (const deck of appState.decks) {
-        const ok = await writeDeckToCloud(deck);
-        if (ok) lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+        await writeDeckToCloud(deck); // tự đánh dấu markDeckSynced() bên trong nếu thành công
       }
       showSyncStatus("☁️ Đã đồng bộ");
     } else {
@@ -1478,6 +1720,11 @@ async function handleAuthChange(user) {
       true
     );
   }
+
+  // Đăng nhập/mở lại app là 1 thời điểm tốt để thử đồng bộ nốt các bộ còn
+  // dở dang từ trước (nếu có) - không cần đợi tới sự kiện "online" hay lưới
+  // an toàn định kỳ.
+  retryPendingDeckSyncs();
 
   // Lắng nghe THAY ĐỔI CẤU TRÚC (bộ thẻ nào đang có, đang xem bộ nào) từ CÁC
   // THIẾT BỊ KHÁC. Chỉ lắng nghe document NHỎ "users/{uid}" (không lắng nghe
