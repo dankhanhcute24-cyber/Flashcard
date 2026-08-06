@@ -509,6 +509,81 @@ body {
   margin-top: 20px;
 }
 
+/* Modal "Bài đọc" cần rộng hơn modal thêm/sửa thẻ (chứa cả lưới ảnh) */
+.modal-box-wide {
+  max-width: 640px;
+}
+
+.readings-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.reading-upload-status {
+  margin: 10px 0 0 0;
+  font-size: 13px;
+  color: #666666;
+}
+
+/* Lưới ảnh bài đọc - tự co giãn số cột theo bề rộng modal */
+.reading-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.reading-thumb-wrap {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #C7C7C7;
+  cursor: pointer;
+  background-color: #ffffff;
+}
+
+.reading-thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Chấm nhỏ báo "đang tải lên" trên ảnh đang chờ upload xong */
+.reading-thumb-wrap.uploading::after {
+  content: "⏳";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.75);
+  font-size: 22px;
+}
+
+/* Lightbox xem ảnh phóng to - tái dùng .modal-overlay nhưng nền tối hơn hẳn
+   và không có modal-box (chỉ có ảnh + nút xóa) */
+.lightbox-overlay {
+  background-color: rgba(0, 0, 0, 0.9);
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lightbox-img {
+  max-width: 92vw;
+  max-height: 78vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-delete-btn {
+  position: static;
+}
+
 /* ============================================================
    RESPONSIVE - kích thước thẻ theo từng loại thiết bị
    Style gốc ở trên (không có media query) = dành cho ĐIỆN THOẠI.
