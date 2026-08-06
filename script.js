@@ -30,6 +30,10 @@ const MAX_SEGMENT_WORD_LEN = 8; // độ dài cụm từ dài nhất thử tra k
 function createDefaultState() {
   return {
     activeDeckId: "deck_default",
+    // Id các bộ thẻ ĐANG CHỜ xóa trên Firestore (đã xóa xong ở máy này, lệnh
+    // xóa trên đám mây có thể chưa thành công) - xem giải thích đầy đủ ở
+    // applyRemoteFullState() và retryPendingDeckDeletions() bên dưới.
+    pendingDeletedDeckIds: [],
     decks: [
       {
         id: "deck_default",
@@ -116,7 +120,13 @@ function loadAppState() {
   }
 
   try {
-    return JSON.parse(saved);
+    const parsed = JSON.parse(saved);
+    // Dữ liệu lưu từ TRƯỚC KHI có tính năng này sẽ chưa có field
+    // "pendingDeletedDeckIds" - luôn đảm bảo có mảng hợp lệ để các chỗ dùng
+    // sau (applyRemoteFullState, retryPendingDeckDeletions...) không phải tự
+    // kiểm tra undefined ở mọi nơi.
+    if (!Array.isArray(parsed.pendingDeletedDeckIds)) parsed.pendingDeletedDeckIds = [];
+    return parsed;
   } catch (error) {
     // Dữ liệu trong localStorage bị hỏng/không đọc được -> tạo lại từ đầu
     const initial = createDefaultState();
@@ -558,6 +568,13 @@ deleteDeckBtn.addEventListener("click", () => {
   );
   if (!confirmed) return;
 
+  // Đánh dấu NGAY (trước khi gọi deleteDeckFromCloud) là bộ này đang chờ xóa
+  // trên đám mây - để nếu lệnh xóa bên dưới thất bại (mất mạng, hết quota...)
+  // và app tải dữ liệu cũ về sau đó, applyRemoteFullState() biết mà KHÔNG cho
+  // bộ này "sống lại" trên chính máy vừa xóa. Xem retryPendingDeckDeletions().
+  if (!appState.pendingDeletedDeckIds.includes(activeDeck.id)) {
+    appState.pendingDeletedDeckIds.push(activeDeck.id);
+  }
   deleteDeckFromCloud(activeDeck.id, activeDeck.name); // xóa hẳn bộ này + toàn bộ thẻ của nó trên Firestore
 
   appState.decks = appState.decks.filter((deck) => deck.id !== activeDeck.id);
@@ -1452,9 +1469,12 @@ async function writeDeckToCloud(deck) {
 }
 
 // Xóa hẳn 1 bộ thẻ trên Firestore (document tên bộ + toàn bộ document thẻ
-// trong subcollection "cards") - gọi khi người dùng bấm "Xóa bộ này".
+// trong subcollection "cards") - gọi khi người dùng bấm "Xóa bộ này", hoặc từ
+// retryPendingDeckDeletions() khi thử lại 1 lệnh xóa trước đó thất bại. Trả
+// về true/false để nơi gọi biết có nên gỡ deckId khỏi pendingDeletedDeckIds
+// hay còn phải thử lại.
 async function deleteDeckFromCloud(deckId, deckName) {
-  if (!firebaseReady || !currentUser || !firestoreFns) return;
+  if (!firebaseReady || !currentUser || !firestoreFns) return false;
 
   const { doc, collection, getDocs, writeBatch, deleteDoc } = firestoreFns;
   try {
@@ -1472,9 +1492,22 @@ async function deleteDeckFromCloud(deckId, deckName) {
     delete lastSyncedCardCount[deckId];
     pendingRetryDeckIds.delete(deckId);
     retryBackoffState.delete(deckId);
+
+    // Lệnh xóa trên đám mây đã CHẮC CHẮN thành công - giờ mới gỡ khỏi hàng
+    // chờ "đang chờ xóa", để applyRemoteFullState() không còn cần chặn bộ
+    // này nữa (dù server có trả về gì cũng không còn ảnh hưởng, vì bộ đã
+    // thực sự không còn tồn tại trên Firestore).
+    const idx = appState.pendingDeletedDeckIds.indexOf(deckId);
+    if (idx !== -1) {
+      appState.pendingDeletedDeckIds.splice(idx, 1);
+      persistLocalStorageOnly();
+    }
+    deleteRetryBackoffState.delete(deckId);
+    return true;
   } catch (error) {
     console.warn(`Lỗi xóa bộ thẻ "${deckName}" trên Firestore:`, error);
     showSyncStatus(`⚠️ Xóa bộ "${deckName}" trên đám mây thất bại - có thể cần thử lại khi có mạng.`, true);
+    return false;
   }
 }
 
@@ -1536,16 +1569,68 @@ async function retryPendingDeckSyncs() {
   }
 }
 
+// Lịch backoff/trạng thái thử lại riêng cho LỆNH XÓA (deckId -> { attempts,
+// nextRetryAt }) - tách khỏi retryBackoffState (dùng cho ghi nội dung) vì 2
+// việc có quy tắc dừng khác nhau, xem retryPendingDeckDeletions() bên dưới.
+// Không cần lưu bền: nếu tải lại trang, appState.pendingDeletedDeckIds (ĐÃ
+// lưu bền) vẫn còn nguyên, app sẽ thử lại ngay từ đầu (attempts = 0).
+const deleteRetryBackoffState = new Map();
+
+// Thử xóa lại các bộ thẻ đang nằm trong appState.pendingDeletedDeckIds (lệnh
+// xóa trước đó thất bại giữa chừng - mất mạng, hết quota...). Gọi ở CÙNG các
+// thời điểm với retryPendingDeckSyncs() (có mạng trở lại, lưới an toàn định
+// kỳ, vừa đăng nhập/mở lại app).
+//
+// KHÁC với retryPendingDeckSyncs(): KHÔNG có giới hạn số lần thử liên tiếp.
+// Lý do: 1 bộ ghi thất bại thì dữ liệu VẪN CÒN trên máy, người dùng có thể tự
+// sửa 1 thẻ để "kích hoạt" thử lại thủ công nếu app đã tự dừng. Nhưng 1 bộ đã
+// XÓA thì đã biến mất khỏi giao diện - người dùng KHÔNG CÒN CÁCH NÀO để tự
+// kích hoạt lại nếu app dừng thử, nên phải tiếp tục thử (giãn cách dần theo
+// RETRY_BACKOFF_SCHEDULE_MS, giữ nguyên 1 giờ/lần sau khi hết lịch) cho tới
+// khi thành công hoặc người dùng đăng xuất.
+let deleteRetryInFlight = false;
+async function retryPendingDeckDeletions() {
+  if (deleteRetryInFlight) return; // tránh chạy chồng nhiều lần cùng lúc
+  if (appState.pendingDeletedDeckIds.length === 0) return;
+  if (!firebaseReady || !currentUser || !firestoreFns) return;
+
+  deleteRetryInFlight = true;
+  try {
+    const now = Date.now();
+
+    for (const deckId of [...appState.pendingDeletedDeckIds]) {
+      // Chưa tới giờ thử lại theo lịch backoff của riêng bộ này - bỏ qua lần
+      // lặp này, để dành cho lần setInterval/online tiếp theo
+      const backoff = deleteRetryBackoffState.get(deckId);
+      if (backoff && now < backoff.nextRetryAt) continue;
+
+      const ok = await deleteDeckFromCloud(deckId, deckId); // thành công thì tự gỡ khỏi pendingDeletedDeckIds bên trong
+      if (ok) continue;
+
+      const attempts = (backoff ? backoff.attempts : 0) + 1;
+      const delayMs = RETRY_BACKOFF_SCHEDULE_MS[Math.min(attempts - 1, RETRY_BACKOFF_SCHEDULE_MS.length - 1)];
+      deleteRetryBackoffState.set(deckId, { attempts, nextRetryAt: now + delayMs });
+    }
+  } finally {
+    deleteRetryInFlight = false;
+  }
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
-    if (pendingRetryDeckIds.size === 0) return;
-    showSyncStatus("🌐 Đã có mạng trở lại - đang thử đồng bộ lại phần còn thiếu...");
-    retryPendingDeckSyncs();
+    if (pendingRetryDeckIds.size > 0) {
+      showSyncStatus("🌐 Đã có mạng trở lại - đang thử đồng bộ lại phần còn thiếu...");
+      retryPendingDeckSyncs();
+    }
+    if (appState.pendingDeletedDeckIds.length > 0) {
+      retryPendingDeckDeletions();
+    }
   });
 
   // Lưới an toàn định kỳ - phòng khi sự kiện "online" của trình duyệt không
   // đáng tin cậy 100% (ví dụ mất Internet nhưng vẫn nối wifi nội bộ)
   setInterval(retryPendingDeckSyncs, 60000);
+  setInterval(retryPendingDeckDeletions, 60000);
 }
 
 // Đồng bộ bộ thẻ ĐANG XEM lên Firestore (gọi từ saveAppState() ở trên, sau
@@ -1621,7 +1706,26 @@ async function fetchDecksByIds(uid, deckIds) {
 // dang) - nếu > 0, nơi gọi nên báo cho người dùng biết.
 function applyRemoteFullState(remote) {
   const localDecksById = new Map(appState.decks.map((deck) => [deck.id, deck]));
+  const pendingDeletedIds = new Set(appState.pendingDeletedDeckIds);
   let suspiciousCount = 0;
+
+  // CHỐT AN TOÀN #0 - BỘ ĐANG CHỜ XÓA TRÊN CHÍNH MÁY NÀY: nếu người dùng vừa
+  // bấm xóa 1 bộ (đã biến mất khỏi appState.decks + được ghi vào
+  // pendingDeletedDeckIds - xem nút "Xóa bộ này") nhưng lệnh xóa trên
+  // Firestore CHƯA chắc đã thành công (mất mạng, hết quota...), server có thể
+  // vẫn còn trả về bộ đó. Loại thẳng nó ra khỏi dữ liệu tải về ở đây - TUYỆT
+  // ĐỐI không cho "sống lại" trên chính máy vừa xóa. deleteDeckFromCloud()
+  // (qua retryPendingDeckDeletions()) sẽ tự thử xóa lại cho tới khi thành
+  // công thật sự, lúc đó mới gỡ khỏi pendingDeletedDeckIds.
+  const remoteDecksToApply = remote.decks.filter((remoteDeck) => {
+    if (pendingDeletedIds.has(remoteDeck.id)) {
+      console.warn(
+        `Bộ thẻ (id: ${remoteDeck.id}) đang chờ xóa trên máy này - bỏ qua dữ liệu tải về từ đám mây, không cho sống lại.`
+      );
+      return false;
+    }
+    return true;
+  });
 
   // CHỐT AN TOÀN THEO TỪNG BỘ THẺ RIÊNG LẺ - áp dụng cho 2 kiểu dữ liệu khả
   // nghi (xem VẤN ĐỀ 1 và 2 đã điều tra):
@@ -1635,7 +1739,7 @@ function applyRemoteFullState(remote) {
   // đang có dữ liệu), các bộ KHÁC vẫn cập nhật bình thường, đồng thời đưa bộ
   // đó vào hàng chờ để TỰ ĐỘNG thử ghi lại đầy đủ lên Firestore khi có mạng
   // ổn định (retryPendingDeckSyncs) - không cần người dùng tự làm gì thêm.
-  const safeDecks = remote.decks.map((remoteDeck) => {
+  const safeDecks = remoteDecksToApply.map((remoteDeck) => {
     const localDeck = localDecksById.get(remoteDeck.id);
     const remoteCardCount = Array.isArray(remoteDeck.cards) ? remoteDeck.cards.length : 0;
     const isEmptyButLocalHasData = remoteCardCount === 0 && localDeck && localDeck.cards.length > 0;
@@ -1702,7 +1806,12 @@ function applyRemoteFullState(remote) {
         : finalDecks[0]
           ? finalDecks[0].id
           : null,
-    decks: finalDecks
+    decks: finalDecks,
+    // QUAN TRỌNG: phải mang theo pendingDeletedDeckIds sang object appState
+    // MỚI này - nếu không, mọi lệnh xóa đang chờ (deleteDeckBtn) sẽ bị "quên"
+    // ngay khi có 1 lần tải dữ liệu khác từ cloud xảy ra xen giữa, mở lại
+    // đúng lỗi "sống lại" mà pendingDeletedDeckIds được thêm vào để chặn.
+    pendingDeletedDeckIds: [...pendingDeletedIds]
   };
 
   cards = getActiveDeck() ? getActiveDeck().cards : [];
@@ -1731,6 +1840,9 @@ function applyRemoteFullState(remote) {
 
   if (pendingRetryDeckIds.size > 0) {
     retryPendingDeckSyncs(); // thử ngay (ví dụ mạng thực ra vẫn ổn, chỉ là lần đọc trước đó gặp bản dở dang)
+  }
+  if (appState.pendingDeletedDeckIds.length > 0) {
+    retryPendingDeckDeletions();
   }
 
   return suspiciousCount;
@@ -1809,6 +1921,7 @@ async function handleAuthChange(user) {
   // dở dang từ trước (nếu có) - không cần đợi tới sự kiện "online" hay lưới
   // an toàn định kỳ.
   retryPendingDeckSyncs();
+  retryPendingDeckDeletions();
 
   // Lắng nghe THAY ĐỔI CẤU TRÚC (bộ thẻ nào đang có, đang xem bộ nào) từ CÁC
   // THIẾT BỊ KHÁC. Chỉ lắng nghe document NHỎ "users/{uid}" (không lắng nghe
