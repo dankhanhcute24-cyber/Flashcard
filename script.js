@@ -1106,6 +1106,7 @@ document.addEventListener("keydown", (event) => {
   if (cardDeletePopover.classList.contains("open")) closeCardDeletePopover();
   if (deckDeletePopover.classList.contains("open")) closeDeckDeletePopover();
   if (readingLightboxOverlay.classList.contains("open")) closeReadingLightbox();
+  if (openReadingDeleteOverlayEl) closeReadingDeleteOverlay();
 });
 
 // Lưu thẻ khi bấm nút "Lưu" trong form (thêm mới hoặc cập nhật thẻ đang sửa)
@@ -1701,6 +1702,8 @@ async function handleAuthChange(user) {
     // về tài khoản vừa đăng xuất), đóng lightbox nếu đang mở, và chuyển khu
     // "Bài đọc" (luôn hiện trên trang) về lại trạng thái "yêu cầu đăng nhập".
     readingItems = [];
+    knownReadingLevels = new Set();
+    currentReadingLevel = null;
     closeReadingLightbox();
     readingsLoginNotice.hidden = false;
     readingsBody.hidden = true;
@@ -1901,7 +1904,17 @@ async function initFirebase() {
 
 let readingItems = []; // toàn bộ ảnh bài đọc của user hiện tại, tải 1 lần khi mở modal
 let currentReadingLevel = null;
+
+// Danh sách TẤT CẢ cấp độ đã biết trong phiên làm việc này - kể cả cấp độ
+// vừa tạo nhưng CHƯA có ảnh nào. Trước đây danh sách cấp độ chỉ được SUY RA
+// từ readingItems (ảnh đã có) + currentReadingLevel (1 cấp độ đang chọn) mỗi
+// lần vẽ lại dropdown - nên hễ tạo thêm 1 cấp độ mới khác (đổi currentReadingLevel
+// sang cấp độ đó), cấp độ trống trước đó KHÔNG còn nằm trong cả 2 nguồn suy ra
+// này nữa -> biến mất khỏi dropdown. Set này khắc phục bằng cách GHI NHỚ lại
+// mọi cấp độ đã từng xuất hiện (từ ảnh có sẵn hoặc vừa tạo), không tự xóa bớt.
+let knownReadingLevels = new Set();
 let currentLightboxReadingItem = null;
+let openReadingDeleteOverlayEl = null; // overlay xóa (nhấn giữ) đang mở, nếu có - chỉ 1 cái mở tại 1 thời điểm
 
 // Chỉ giữ lại chữ/số/dấu tiếng Việt/gạch dưới/gạch ngang/dấu chấm - dùng làm
 // tên cấp độ (vừa hiển thị trong dropdown, vừa dùng làm tên thư mục "folder"
@@ -1936,12 +1949,13 @@ async function uploadImageToCloudinary(file, folder) {
   return result;
 }
 
-// Danh sách cấp độ = các cấp độ đã thực sự có ảnh + cấp độ đang chọn (để dù
-// vừa tạo cấp độ mới, chưa có ảnh nào, vẫn hiện trong dropdown)
+// Danh sách cấp độ hiện có = knownReadingLevels (xem giải thích ở khai báo
+// biến) - luôn đảm bảo có ít nhất cấp độ đang chọn trong đó, phòng trường
+// hợp gọi hàm này trước khi kịp thêm vào knownReadingLevels ở nơi khác.
 function getReadingLevels() {
-  const levels = new Set(readingItems.map((item) => item.level));
-  levels.add(currentReadingLevel || DEFAULT_READING_LEVEL);
-  return [...levels].sort();
+  if (currentReadingLevel) knownReadingLevels.add(currentReadingLevel);
+  if (knownReadingLevels.size === 0) knownReadingLevels.add(DEFAULT_READING_LEVEL);
+  return [...knownReadingLevels].sort();
 }
 
 function renderReadingLevelSelect() {
@@ -1965,6 +1979,68 @@ function renderReadingLevelSelect() {
   readingLevelSelectEl.appendChild(newLevelOption);
 }
 
+function closeReadingDeleteOverlay() {
+  if (openReadingDeleteOverlayEl) {
+    openReadingDeleteOverlayEl.classList.remove("open");
+    openReadingDeleteOverlayEl = null;
+  }
+}
+
+// Gắn cử chỉ NHẤN GIỮ (chuột trên máy tính, ngón tay trên điện thoại - dùng
+// chung Pointer Events nên tự hoạt động cho cả 2, giống hệt cơ chế nhấn giữ
+// để xóa thẻ/xóa bộ thẻ đã có, dùng chung LONG_PRESS_MS/LONG_PRESS_MOVE_THRESHOLD
+// để nhất quán cảm giác "giữ bao lâu thì tính" trong toàn app) vào 1 ảnh
+// bài đọc - giữ đủ lâu mà không di chuyển nhiều thì hiện overlay xóa.
+function attachReadingThumbLongPress(wrapEl, overlayEl, onLongPress) {
+  let pressTimer = null;
+  let startX = 0;
+  let startY = 0;
+
+  wrapEl.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".reading-delete-overlay")) return; // đang bấm vào overlay xóa (nếu lỡ đã mở) - không tính là bắt đầu giữ mới
+    startX = event.clientX;
+    startY = event.clientY;
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      closeReadingDeleteOverlay(); // đóng overlay đang mở ở ảnh KHÁC (nếu có) - chỉ 1 ảnh mở tại 1 thời điểm
+      overlayEl.classList.add("open");
+      openReadingDeleteOverlayEl = overlayEl;
+      onLongPress();
+    }, LONG_PRESS_MS);
+  });
+
+  wrapEl.addEventListener("pointermove", (event) => {
+    if (!pressTimer) return;
+    const dx = Math.abs(event.clientX - startX);
+    const dy = Math.abs(event.clientY - startY);
+    if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  });
+
+  const cancelPressTimer = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+  wrapEl.addEventListener("pointerup", cancelPressTimer);
+  wrapEl.addEventListener("pointercancel", cancelPressTimer);
+}
+
+// Bấm/chạm ra ngoài overlay xóa đang mở để đóng lại, không xóa gì cả. Dùng
+// "pointerdown" (lúc BẮT ĐẦU bấm) thay vì "click" - vì "click" của cử chỉ
+// vừa mở overlay (nhấn giữ rồi thả tay) có thể bị trình duyệt tính nhắm
+// nhầm ra ngoài overlay (xem giải thích ở deleteOverlay.addEventListener
+// "pointerup" phía trên), khiến overlay tự đóng ngay khi vừa mở.
+// "pointerdown" luôn phản ánh đúng nơi người dùng THỰC SỰ vừa đặt tay xuống.
+document.addEventListener("pointerdown", (event) => {
+  if (openReadingDeleteOverlayEl && !openReadingDeleteOverlayEl.contains(event.target)) {
+    closeReadingDeleteOverlay();
+  }
+});
+
 // Dùng DOM API (createElement/textContent) thay vì innerHTML để hiển thị
 // fileName/imageUrl - đây là dữ liệu do người dùng tự đặt tên lúc tải ảnh
 // lên (tên file gốc), tránh mọi rủi ro chèn HTML lạ dù là rủi ro thấp (chỉ
@@ -1972,6 +2048,7 @@ function renderReadingLevelSelect() {
 function renderReadingGrid() {
   const items = readingItems.filter((item) => item.level === currentReadingLevel);
   readingGridEl.innerHTML = "";
+  openReadingDeleteOverlayEl = null; // lưới vừa bị vẽ lại từ đầu, overlay cũ (nếu có) không còn tồn tại trong DOM nữa
 
   items.forEach((item) => {
     const wrap = document.createElement("div");
@@ -1983,7 +2060,43 @@ function renderReadingGrid() {
     img.loading = "lazy";
     wrap.appendChild(img);
 
-    wrap.addEventListener("click", () => openReadingLightbox(item));
+    // Overlay xóa - ẩn mặc định, chỉ hiện khi NHẤN GIỮ (xem
+    // attachReadingThumbLongPress bên dưới). Cách xóa CŨ (nếu người dùng mở
+    // lightbox rồi bấm nút xóa trong đó) vẫn giữ nguyên y hệt, đây chỉ là
+    // đường TẮT thêm song song, cả 2 đều gọi chung deleteReadingItem().
+    const deleteOverlay = document.createElement("div");
+    deleteOverlay.className = "reading-delete-overlay";
+    const deleteIcon = document.createElement("span");
+    deleteIcon.className = "reading-delete-overlay-icon";
+    deleteIcon.textContent = "🗑";
+    deleteOverlay.appendChild(deleteIcon);
+    // Dùng "pointerup" thay vì "click": vì overlay này chỉ xuất hiện GIỮA
+    // LÚC đang giữ chuột/ngón tay (không phải trước khi bắt đầu giữ), trình
+    // duyệt sẽ tính "click" nảy sinh sau đó nhắm vào TỔ TIÊN CHUNG của điểm
+    // bắt đầu giữ (lúc đó chưa có overlay) và điểm thả tay (lúc đó overlay
+    // đã hiện) - tức là quay lại "wrap" chứ KHÔNG PHẢI overlay, khiến bộ
+    // lắng nghe "bấm ra ngoài để đóng" bên dưới hiểu lầm và tự đóng ngay lập
+    // tức. "pointerup" không bị hiệu ứng "tổ tiên chung" này, luôn nhắm đúng
+    // phần tử thật sự đang ở dưới ngón tay/chuột lúc thả ra.
+    deleteOverlay.addEventListener("pointerup", (event) => {
+      event.stopPropagation(); // không cho nổi bọt lên wrap -> tránh mở lightbox
+      deleteReadingItem(item); // hàm có sẵn - đã tự hiện confirm() trước khi xóa thật
+    });
+    wrap.appendChild(deleteOverlay);
+
+    let justLongPressed = false; // đặt true khi vừa nhấn giữ đủ lâu, để cú "click" nảy sinh ngay sau đó (lúc thả tay/chuột) không mở nhầm lightbox
+    attachReadingThumbLongPress(wrap, deleteOverlay, () => {
+      justLongPressed = true;
+    });
+
+    wrap.addEventListener("click", () => {
+      if (justLongPressed) {
+        justLongPressed = false;
+        return;
+      }
+      openReadingLightbox(item);
+    });
+
     readingGridEl.appendChild(wrap);
   });
 
@@ -2012,6 +2125,10 @@ async function loadAndShowReadingsSection() {
     const { collection, getDocs } = firestoreFns;
     const snap = await getDocs(collection(firebaseDb, "users", currentUser.uid, "readings"));
     readingItems = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Nạp lại từ dữ liệu THẬT trên Firestore - đây là nguồn đáng tin cậy nhất
+    // (cấp độ trống từ phiên làm việc trước, nếu có, hợp lý là không còn giữ
+    // qua lần tải trang mới vì chẳng còn gì để nhớ tới nó cả).
+    knownReadingLevels = new Set(readingItems.map((item) => item.level));
   } catch (error) {
     console.warn("Lỗi tải danh sách ảnh bài đọc:", error);
     readingItems = [];
@@ -2029,6 +2146,7 @@ readingLevelSelectEl.addEventListener("change", () => {
     const name = prompt("Nhập tên cấp độ mới (ví dụ: level4):");
     if (name && name.trim()) {
       currentReadingLevel = sanitizePathSegment(name, DEFAULT_READING_LEVEL);
+      knownReadingLevels.add(currentReadingLevel); // CỘNG THÊM, không thay thế các cấp độ đã có
     }
     renderReadingLevelSelect();
     renderReadingGrid();

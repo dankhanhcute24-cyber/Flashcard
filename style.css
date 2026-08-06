@@ -581,6 +581,29 @@ body {
   display: block;
 }
 
+/* Overlay xóa - hiện ra khi NHẤN GIỮ vào ảnh (chuột hoặc ngón tay) khoảng
+   LONG_PRESS_MS, xem attachReadingThumbLongPress() trong script.js. Phủ kín
+   ảnh đó (không phải toàn màn hình) vì mỗi ảnh trong lưới cần xóa độc lập -
+   khác với .card-delete-popover (chỉ có 1 thẻ đang xem tại 1 thời điểm). */
+.reading-delete-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(211, 47, 47, 0.85);
+  cursor: pointer;
+}
+
+.reading-delete-overlay.open {
+  display: flex;
+}
+
+.reading-delete-overlay-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
 /* Chấm nhỏ báo "đang tải lên" trên ảnh đang chờ upload xong */
 .reading-thumb-wrap.uploading::after {
   content: "⏳";
