@@ -21,10 +21,6 @@ const COUNTER_RESERVED_HEIGHT = 24; // px - chừa chỗ cho chỉ số vị tr�
 const NEW_DECK_OPTION_VALUE = "__new_deck__"; // giá trị đặc biệt của dòng "➕ Tạo bộ mới" trong dropdown
 const TOOLTIP_AUTO_HIDE_MS = 3000; // tự ẩn tooltip sau chừng này nếu người dùng không chạm ra chỗ khác
 
-const NEW_READING_LEVEL_OPTION_VALUE = "__new_reading_level__"; // giống NEW_DECK_OPTION_VALUE, nhưng cho dropdown chọn cấp độ bài đọc
-const DEFAULT_READING_LEVEL = "level1";
-const MAX_READING_IMAGE_BYTES = 15 * 1024 * 1024; // 15MB - đủ cho ảnh chụp bằng điện thoại, chặn nhầm file quá khổ
-
 const MAX_SEGMENT_WORD_LEN = 8; // độ dài cụm từ dài nhất thử tra khi tách câu ví dụ thành pinyin
 
 // ============================================================
@@ -190,17 +186,6 @@ const authUserEl = document.getElementById("authUser");
 const authAvatarEl = document.getElementById("authAvatar");
 const authNameEl = document.getElementById("authName");
 const syncStatusEl = document.getElementById("syncStatus");
-
-const readingsLoginNotice = document.getElementById("readingsLoginNotice");
-const readingsBody = document.getElementById("readingsBody");
-const readingLevelSelectEl = document.getElementById("readingLevelSelect");
-const readingImageInput = document.getElementById("readingImageInput");
-const readingUploadStatusEl = document.getElementById("readingUploadStatus");
-const readingGridEl = document.getElementById("readingGrid");
-const readingEmptyStateEl = document.getElementById("readingEmptyState");
-const readingLightboxOverlay = document.getElementById("readingLightboxOverlay");
-const readingLightboxImg = document.getElementById("readingLightboxImg");
-const readingLightboxDeleteBtn = document.getElementById("readingLightboxDeleteBtn");
 
 const addCardBtn = document.getElementById("addCardBtn");
 const editCardBtn = document.getElementById("editCardBtn");
@@ -1105,8 +1090,6 @@ document.addEventListener("keydown", (event) => {
   if (cardFormOverlay.classList.contains("open")) closeCardForm();
   if (cardDeletePopover.classList.contains("open")) closeCardDeletePopover();
   if (deckDeletePopover.classList.contains("open")) closeDeckDeletePopover();
-  if (readingLightboxOverlay.classList.contains("open")) closeReadingLightbox();
-  if (openReadingDeleteOverlayEl) closeReadingDeleteOverlay();
 });
 
 // Lưu thẻ khi bấm nút "Lưu" trong form (thêm mới hoặc cập nhật thẻ đang sửa)
@@ -1216,20 +1199,6 @@ const FIREBASE_SDK_VERSION = "10.12.2";
 // Firestore giới hạn TỐI ĐA 500 thao tác ghi/xóa trong 1 "batch" (1 lần commit
 // nguyên tử) - dùng 450 để chừa khoảng an toàn.
 const FIRESTORE_BATCH_CHUNK_SIZE = 450;
-
-// Lưu ẢNH bài đọc lên Cloudinary (KHÔNG dùng Firebase Storage - cần thẻ
-// thanh toán để bật, nên đổi sang Cloudinary: có gói miễn phí, upload thẳng
-// từ trình duyệt bằng "unsigned upload preset", không cần API secret/thư
-// viện riêng). Chỉ ảnh mới đi qua Cloudinary - dữ liệu thẻ vẫn 100% Firestore
-// như cũ, 2 hệ thống độc lập nhau.
-//
-// "Unsigned upload preset" là 1 cấu hình tạo sẵn trên Cloudinary Console cho
-// phép trình duyệt (không cần đăng nhập Cloudinary, không cần API secret) tải
-// ảnh lên trực tiếp - an toàn để đặt trong code frontend vì nó KHÔNG cho phép
-// xóa/sửa/liệt kê ảnh, chỉ cho phép tải ảnh MỚI lên.
-const CLOUDINARY_CLOUD_NAME = "qlzudyue";
-const CLOUDINARY_UPLOAD_PRESET = "flashcard_readings";
-const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
 // (Các biến firebaseAuth/firebaseDb/firestoreFns/currentUser/unsubscribeSnapshot/
 // firebaseReady/lastMetaWriteId/lastSyncedCardsJSON đã được khai báo sớm hơn ở
@@ -1697,16 +1666,6 @@ async function handleAuthChange(user) {
     loginBtn.hidden = false;
     authUserEl.hidden = true;
     syncStatusEl.hidden = true;
-
-    // Đăng xuất -> dọn sạch dữ liệu ảnh bài đọc đang giữ trong bộ nhớ (thuộc
-    // về tài khoản vừa đăng xuất), đóng lightbox nếu đang mở, và chuyển khu
-    // "Bài đọc" (luôn hiện trên trang) về lại trạng thái "yêu cầu đăng nhập".
-    readingItems = [];
-    knownReadingLevels = new Set();
-    currentReadingLevel = null;
-    closeReadingLightbox();
-    readingsLoginNotice.hidden = false;
-    readingsBody.hidden = true;
     return;
   }
 
@@ -1714,11 +1673,6 @@ async function handleAuthChange(user) {
   authUserEl.hidden = false;
   authAvatarEl.src = user.photoURL || "";
   authNameEl.textContent = user.displayName || user.email || "";
-
-  // Tải khu "Bài đọc" song song với phần đồng bộ bộ thẻ bên dưới - 2 hệ
-  // thống độc lập nhau, không cần đợi lẫn nhau (xem đầu phần "BÀI ĐỌC THEO
-  // CẤP ĐỘ" cuối file).
-  loadAndShowReadingsSection();
 
   const { doc, getDoc, onSnapshot } = firestoreFns;
   const metaRef = doc(firebaseDb, "users", user.uid);
@@ -1877,401 +1831,6 @@ async function initFirebase() {
     console.warn("Không khởi tạo được Firebase - app vẫn hoạt động bình thường với localStorage.", error);
   }
 }
-
-// ============================================================
-// BÀI ĐỌC THEO CẤP ĐỘ (ảnh lưu trên Cloudinary, metadata lưu Firestore)
-//
-// Tính năng HOÀN TOÀN TÁCH BIỆT khỏi hệ thống bộ thẻ ở trên - không đụng gì
-// tới appState/saveAppState/localStorage. CẦN ĐĂNG NHẬP mới dùng được (ảnh
-// chỉ lưu trên đám mây, không có bản offline) - chưa đăng nhập thì khu vực
-// này (nằm ngay trên thẻ flashcard, xem index.html) chỉ hiện thông báo yêu
-// cầu đăng nhập, không có gì để mất/hỏng.
-//
-// Cấu trúc lưu trữ:
-//   Cloudinary: thư mục readings/{level}/... (tải lên qua "unsigned upload
-//               preset", xem uploadImageToCloudinary bên dưới - KHÔNG dùng
-//               Firebase Storage vì cần thẻ thanh toán mới bật được)
-//   Firestore:  users/{uid}/readings/{id tự sinh} - { level, imageUrl,
-//               publicId, fileName, uploadedAt }
-// "Cấp độ" chỉ là 1 chuỗi gắn nhãn (không phải 1 danh sách lưu riêng) - suy
-// ra từ các ảnh đã có + cấp độ đang chọn, giống cách app không có bảng
-// "danh sách bộ thẻ" riêng mà suy ra từ chính các bộ thẻ.
-//
-// LƯU Ý: xóa ảnh trong app chỉ xóa bản ghi Firestore, KHÔNG xóa file trên
-// Cloudinary (xem deleteReadingItem) - xóa thật trên Cloudinary cần API
-// secret, không an toàn để đặt trong code chạy ở trình duyệt.
-// ============================================================
-
-let readingItems = []; // toàn bộ ảnh bài đọc của user hiện tại, tải 1 lần khi mở modal
-let currentReadingLevel = null;
-
-// Danh sách TẤT CẢ cấp độ đã biết trong phiên làm việc này - kể cả cấp độ
-// vừa tạo nhưng CHƯA có ảnh nào. Trước đây danh sách cấp độ chỉ được SUY RA
-// từ readingItems (ảnh đã có) + currentReadingLevel (1 cấp độ đang chọn) mỗi
-// lần vẽ lại dropdown - nên hễ tạo thêm 1 cấp độ mới khác (đổi currentReadingLevel
-// sang cấp độ đó), cấp độ trống trước đó KHÔNG còn nằm trong cả 2 nguồn suy ra
-// này nữa -> biến mất khỏi dropdown. Set này khắc phục bằng cách GHI NHỚ lại
-// mọi cấp độ đã từng xuất hiện (từ ảnh có sẵn hoặc vừa tạo), không tự xóa bớt.
-let knownReadingLevels = new Set();
-let currentLightboxReadingItem = null;
-let openReadingDeleteOverlayEl = null; // overlay xóa (nhấn giữ) đang mở, nếu có - chỉ 1 cái mở tại 1 thời điểm
-
-// Chỉ giữ lại chữ/số/dấu tiếng Việt/gạch dưới/gạch ngang/dấu chấm - dùng làm
-// tên cấp độ (vừa hiển thị trong dropdown, vừa dùng làm tên thư mục "folder"
-// khi tải ảnh lên Cloudinary), không cho phép "/" hay ".." để tránh vô tình
-// tạo nhầm thư mục con hoặc đi ra ngoài thư mục "readings/".
-function sanitizePathSegment(text, fallback) {
-  const cleaned = String(text || "")
-    .trim()
-    .replace(/[\/\\]+/g, "-")
-    .replace(/[^a-zA-Z0-9_.\-À-ỹ ]/g, "");
-  return cleaned || fallback;
-}
-
-// Tải 1 ảnh lên Cloudinary bằng "unsigned upload" - gửi thẳng file qua fetch,
-// không cần cài thư viện Cloudinary SDK. "folder" gom ảnh theo cấp độ trên
-// chính Cloudinary (readings/level1, readings/level2...) - tương tự cấu trúc
-// đường dẫn readings/{level}/... đã bàn ban đầu, chỉ khác là Cloudinary quản
-// lý thay vì Firebase Storage. Trả về { secure_url, public_id, ... } từ
-// Cloudinary khi thành công, ném lỗi khi thất bại.
-async function uploadImageToCloudinary(file, folder) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-  formData.append("folder", folder);
-
-  const response = await fetch(CLOUDINARY_UPLOAD_URL, { method: "POST", body: formData });
-  const result = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new Error((result && result.error && result.error.message) || `Cloudinary trả về lỗi HTTP ${response.status}`);
-  }
-  return result;
-}
-
-// Danh sách cấp độ hiện có = knownReadingLevels (xem giải thích ở khai báo
-// biến) - luôn đảm bảo có ít nhất cấp độ đang chọn trong đó, phòng trường
-// hợp gọi hàm này trước khi kịp thêm vào knownReadingLevels ở nơi khác.
-function getReadingLevels() {
-  if (currentReadingLevel) knownReadingLevels.add(currentReadingLevel);
-  if (knownReadingLevels.size === 0) knownReadingLevels.add(DEFAULT_READING_LEVEL);
-  return [...knownReadingLevels].sort();
-}
-
-function renderReadingLevelSelect() {
-  const levels = getReadingLevels();
-  if (!currentReadingLevel || !levels.includes(currentReadingLevel)) {
-    currentReadingLevel = levels[0];
-  }
-
-  readingLevelSelectEl.innerHTML = "";
-  levels.forEach((level) => {
-    const option = document.createElement("option");
-    option.value = level;
-    option.textContent = level;
-    if (level === currentReadingLevel) option.selected = true;
-    readingLevelSelectEl.appendChild(option);
-  });
-
-  const newLevelOption = document.createElement("option");
-  newLevelOption.value = NEW_READING_LEVEL_OPTION_VALUE;
-  newLevelOption.textContent = "➕ Thêm cấp độ mới";
-  readingLevelSelectEl.appendChild(newLevelOption);
-}
-
-function closeReadingDeleteOverlay() {
-  if (openReadingDeleteOverlayEl) {
-    openReadingDeleteOverlayEl.classList.remove("open");
-    openReadingDeleteOverlayEl = null;
-  }
-}
-
-// Gắn cử chỉ NHẤN GIỮ (chuột trên máy tính, ngón tay trên điện thoại - dùng
-// chung Pointer Events nên tự hoạt động cho cả 2, giống hệt cơ chế nhấn giữ
-// để xóa thẻ/xóa bộ thẻ đã có, dùng chung LONG_PRESS_MS/LONG_PRESS_MOVE_THRESHOLD
-// để nhất quán cảm giác "giữ bao lâu thì tính" trong toàn app) vào 1 ảnh
-// bài đọc - giữ đủ lâu mà không di chuyển nhiều thì hiện overlay xóa.
-function attachReadingThumbLongPress(wrapEl, overlayEl, onLongPress) {
-  let pressTimer = null;
-  let startX = 0;
-  let startY = 0;
-
-  wrapEl.addEventListener("pointerdown", (event) => {
-    if (event.target.closest(".reading-delete-overlay")) return; // đang bấm vào overlay xóa (nếu lỡ đã mở) - không tính là bắt đầu giữ mới
-    startX = event.clientX;
-    startY = event.clientY;
-    pressTimer = setTimeout(() => {
-      pressTimer = null;
-      closeReadingDeleteOverlay(); // đóng overlay đang mở ở ảnh KHÁC (nếu có) - chỉ 1 ảnh mở tại 1 thời điểm
-      overlayEl.classList.add("open");
-      openReadingDeleteOverlayEl = overlayEl;
-      onLongPress();
-    }, LONG_PRESS_MS);
-  });
-
-  wrapEl.addEventListener("pointermove", (event) => {
-    if (!pressTimer) return;
-    const dx = Math.abs(event.clientX - startX);
-    const dy = Math.abs(event.clientY - startY);
-    if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
-  });
-
-  const cancelPressTimer = () => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
-  };
-  wrapEl.addEventListener("pointerup", cancelPressTimer);
-  wrapEl.addEventListener("pointercancel", cancelPressTimer);
-}
-
-// Bấm/chạm ra ngoài overlay xóa đang mở để đóng lại, không xóa gì cả. Dùng
-// "pointerdown" (lúc BẮT ĐẦU bấm) thay vì "click" - vì "click" của cử chỉ
-// vừa mở overlay (nhấn giữ rồi thả tay) có thể bị trình duyệt tính nhắm
-// nhầm ra ngoài overlay (xem giải thích ở deleteOverlay.addEventListener
-// "pointerup" phía trên), khiến overlay tự đóng ngay khi vừa mở.
-// "pointerdown" luôn phản ánh đúng nơi người dùng THỰC SỰ vừa đặt tay xuống.
-document.addEventListener("pointerdown", (event) => {
-  if (openReadingDeleteOverlayEl && !openReadingDeleteOverlayEl.contains(event.target)) {
-    closeReadingDeleteOverlay();
-  }
-});
-
-// Dùng DOM API (createElement/textContent) thay vì innerHTML để hiển thị
-// fileName/imageUrl - đây là dữ liệu do người dùng tự đặt tên lúc tải ảnh
-// lên (tên file gốc), tránh mọi rủi ro chèn HTML lạ dù là rủi ro thấp (chỉ
-// ảnh hưởng chính tài khoản của họ).
-function renderReadingGrid() {
-  const items = readingItems.filter((item) => item.level === currentReadingLevel);
-  readingGridEl.innerHTML = "";
-  openReadingDeleteOverlayEl = null; // lưới vừa bị vẽ lại từ đầu, overlay cũ (nếu có) không còn tồn tại trong DOM nữa
-
-  items.forEach((item) => {
-    const wrap = document.createElement("div");
-    wrap.className = "reading-thumb-wrap";
-
-    const img = document.createElement("img");
-    img.src = item.imageUrl;
-    img.alt = item.fileName || "";
-    img.loading = "lazy";
-    wrap.appendChild(img);
-
-    // Overlay xóa - ẩn mặc định, chỉ hiện khi NHẤN GIỮ (xem
-    // attachReadingThumbLongPress bên dưới). Cách xóa CŨ (nếu người dùng mở
-    // lightbox rồi bấm nút xóa trong đó) vẫn giữ nguyên y hệt, đây chỉ là
-    // đường TẮT thêm song song, cả 2 đều gọi chung deleteReadingItem().
-    const deleteOverlay = document.createElement("div");
-    deleteOverlay.className = "reading-delete-overlay";
-    const deleteIcon = document.createElement("span");
-    deleteIcon.className = "reading-delete-overlay-icon";
-    deleteIcon.textContent = "🗑";
-    deleteOverlay.appendChild(deleteIcon);
-    // Dùng "pointerup" thay vì "click": vì overlay này chỉ xuất hiện GIỮA
-    // LÚC đang giữ chuột/ngón tay (không phải trước khi bắt đầu giữ), trình
-    // duyệt sẽ tính "click" nảy sinh sau đó nhắm vào TỔ TIÊN CHUNG của điểm
-    // bắt đầu giữ (lúc đó chưa có overlay) và điểm thả tay (lúc đó overlay
-    // đã hiện) - tức là quay lại "wrap" chứ KHÔNG PHẢI overlay, khiến bộ
-    // lắng nghe "bấm ra ngoài để đóng" bên dưới hiểu lầm và tự đóng ngay lập
-    // tức. "pointerup" không bị hiệu ứng "tổ tiên chung" này, luôn nhắm đúng
-    // phần tử thật sự đang ở dưới ngón tay/chuột lúc thả ra.
-    deleteOverlay.addEventListener("pointerup", (event) => {
-      event.stopPropagation(); // không cho nổi bọt lên wrap -> tránh mở lightbox
-      deleteReadingItem(item); // hàm có sẵn - đã tự hiện confirm() trước khi xóa thật
-    });
-    wrap.appendChild(deleteOverlay);
-
-    let justLongPressed = false; // đặt true khi vừa nhấn giữ đủ lâu, để cú "click" nảy sinh ngay sau đó (lúc thả tay/chuột) không mở nhầm lightbox
-    attachReadingThumbLongPress(wrap, deleteOverlay, () => {
-      justLongPressed = true;
-    });
-
-    wrap.addEventListener("click", () => {
-      if (justLongPressed) {
-        justLongPressed = false;
-        return;
-      }
-      openReadingLightbox(item);
-    });
-
-    readingGridEl.appendChild(wrap);
-  });
-
-  readingGridEl.hidden = items.length === 0;
-  readingEmptyStateEl.hidden = items.length > 0;
-}
-
-// Khu "Bài đọc" giờ nằm THẲNG trên trang (không còn là modal cần bấm mở) -
-// gọi hàm này ngay sau khi đăng nhập thành công (xem handleAuthChange) để
-// hiện khu vực này lên và tải danh sách ảnh 1 lần.
-async function loadAndShowReadingsSection() {
-  if (!firebaseReady || !currentUser || !firestoreFns) {
-    readingsLoginNotice.hidden = false;
-    readingsBody.hidden = true;
-    return;
-  }
-
-  readingsLoginNotice.hidden = true;
-  readingsBody.hidden = false;
-  readingUploadStatusEl.hidden = true;
-  readingGridEl.hidden = true;
-  readingEmptyStateEl.hidden = false;
-  readingEmptyStateEl.textContent = "⏳ Đang tải danh sách ảnh...";
-
-  try {
-    const { collection, getDocs } = firestoreFns;
-    const snap = await getDocs(collection(firebaseDb, "users", currentUser.uid, "readings"));
-    readingItems = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // Nạp lại từ dữ liệu THẬT trên Firestore - đây là nguồn đáng tin cậy nhất
-    // (cấp độ trống từ phiên làm việc trước, nếu có, hợp lý là không còn giữ
-    // qua lần tải trang mới vì chẳng còn gì để nhớ tới nó cả).
-    knownReadingLevels = new Set(readingItems.map((item) => item.level));
-  } catch (error) {
-    console.warn("Lỗi tải danh sách ảnh bài đọc:", error);
-    readingItems = [];
-    readingEmptyStateEl.textContent = "⚠️ Không tải được danh sách ảnh (mất mạng?). Thử tải lại trang.";
-    return;
-  }
-
-  readingEmptyStateEl.textContent = 'Cấp độ này chưa có ảnh bài đọc nào. Bấm "Tải ảnh lên" để thêm.';
-  renderReadingLevelSelect();
-  renderReadingGrid();
-}
-
-readingLevelSelectEl.addEventListener("change", () => {
-  if (readingLevelSelectEl.value === NEW_READING_LEVEL_OPTION_VALUE) {
-    const name = prompt("Nhập tên cấp độ mới (ví dụ: level4):");
-    if (name && name.trim()) {
-      currentReadingLevel = sanitizePathSegment(name, DEFAULT_READING_LEVEL);
-      knownReadingLevels.add(currentReadingLevel); // CỘNG THÊM, không thay thế các cấp độ đã có
-    }
-    renderReadingLevelSelect();
-    renderReadingGrid();
-    return;
-  }
-  currentReadingLevel = readingLevelSelectEl.value;
-  renderReadingGrid();
-});
-
-// Tải lên TỪNG ẢNH MỘT theo thứ tự (không phải song song) - đơn giản, dễ
-// theo dõi tiến độ, và nếu 1 ảnh lỗi giữa chừng thì biết chính xác đã tải
-// được bao nhiêu ảnh trước đó (các ảnh đã tải thành công KHÔNG bị mất/xóa).
-async function uploadReadingImages(files) {
-  if (!firebaseReady || !currentUser || !firestoreFns) {
-    alert("Cần đăng nhập để tải ảnh lên.");
-    return;
-  }
-
-  const level = sanitizePathSegment(currentReadingLevel, DEFAULT_READING_LEVEL);
-  const folder = `readings/${level}`;
-  const { collection, addDoc } = firestoreFns;
-
-  readingUploadStatusEl.hidden = false;
-  let uploadedCount = 0;
-  let skippedCount = 0;
-
-  for (const file of files) {
-    if (file.size > MAX_READING_IMAGE_BYTES) {
-      skippedCount++;
-      console.warn(`Bỏ qua "${file.name}" - vượt quá ${(MAX_READING_IMAGE_BYTES / 1024 / 1024).toFixed(0)}MB.`);
-      continue;
-    }
-
-    readingUploadStatusEl.textContent = `⏳ Đang tải ảnh lên (${uploadedCount + 1}/${files.length})...`;
-
-    try {
-      // Bước 1: đẩy file thẳng lên Cloudinary (không qua Firebase)
-      const cloudinaryResult = await uploadImageToCloudinary(file, folder);
-
-      // Bước 2: chỉ lưu URL + metadata vào Firestore, giống kế hoạch ban đầu
-      const uploadedAt = Date.now();
-      const readingsCol = collection(firebaseDb, "users", currentUser.uid, "readings");
-      const docData = {
-        level,
-        imageUrl: cloudinaryResult.secure_url,
-        publicId: cloudinaryResult.public_id, // không dùng để xóa (xem deleteReadingItem), chỉ giữ để tham khảo/thủ công sau này nếu cần
-        fileName: file.name,
-        uploadedAt
-      };
-      const docRef = await addDoc(readingsCol, docData);
-
-      readingItems.push({ id: docRef.id, ...docData });
-      uploadedCount++;
-      renderReadingLevelSelect();
-      renderReadingGrid();
-    } catch (error) {
-      console.warn(`Lỗi tải ảnh "${file.name}" lên Cloudinary:`, error);
-      readingUploadStatusEl.textContent =
-        `⚠️ Lỗi khi tải "${file.name}" lên (${error.message || "mất mạng?"}) - đã tải thành công ${uploadedCount}/${files.length} ảnh trước đó, ` +
-        `các ảnh đó KHÔNG bị mất. Vui lòng thử tải lại (các) ảnh còn thiếu.`;
-      return;
-    }
-  }
-
-  readingUploadStatusEl.textContent =
-    skippedCount > 0
-      ? `☁️ Đã tải lên ${uploadedCount}/${files.length} ảnh (bỏ qua ${skippedCount} ảnh quá ${(MAX_READING_IMAGE_BYTES / 1024 / 1024).toFixed(0)}MB).`
-      : `☁️ Đã tải lên ${uploadedCount}/${files.length} ảnh.`;
-  setTimeout(() => {
-    readingUploadStatusEl.hidden = true;
-  }, 3000);
-}
-
-readingImageInput.addEventListener("change", (event) => {
-  const files = Array.from(event.target.files || []);
-  event.target.value = ""; // cho phép chọn lại đúng file này lần nữa nếu cần
-  if (files.length > 0) uploadReadingImages(files);
-});
-
-function openReadingLightbox(item) {
-  currentLightboxReadingItem = item;
-  readingLightboxImg.src = item.imageUrl;
-  readingLightboxImg.alt = item.fileName || "";
-  readingLightboxOverlay.classList.add("open");
-}
-
-function closeReadingLightbox() {
-  readingLightboxOverlay.classList.remove("open");
-  currentLightboxReadingItem = null;
-}
-
-readingLightboxOverlay.addEventListener("click", (event) => {
-  if (event.target === readingLightboxOverlay) closeReadingLightbox();
-});
-
-// Chỉ xóa BẢN GHI trong Firestore (danh sách hiển thị trong app) - KHÔNG gọi
-// API xóa ảnh trên Cloudinary, vì việc đó cần "API secret" (khóa bí mật) mà
-// đặt trong code chạy ở trình duyệt thì ai cũng xem được, không an toàn. Ảnh
-// gốc vẫn còn trên Cloudinary sau khi xóa ở đây (chỉ không còn hiện trong
-// app nữa) - nếu cần dọn hẳn, phải xóa thủ công qua Cloudinary Console.
-async function deleteReadingItem(item) {
-  const confirmed = confirm(
-    `Xóa ảnh "${item.fileName}" khỏi danh sách?\n` +
-      `Ảnh sẽ không còn hiện trong app nữa, nhưng file gốc vẫn còn lưu trên Cloudinary (app không tự xóa được ảnh trên đó).`
-  );
-  if (!confirmed) return;
-  if (!firebaseReady || !currentUser || !firestoreFns) return;
-
-  try {
-    const { doc, deleteDoc } = firestoreFns;
-    await deleteDoc(doc(firebaseDb, "users", currentUser.uid, "readings", item.id));
-
-    readingItems = readingItems.filter((r) => r.id !== item.id);
-    closeReadingLightbox();
-    renderReadingLevelSelect();
-    renderReadingGrid();
-  } catch (error) {
-    console.warn("Lỗi xóa ảnh bài đọc:", error);
-    alert("Xóa ảnh thất bại - có thể do mất mạng. Vui lòng thử lại.");
-  }
-}
-
-readingLightboxDeleteBtn.addEventListener("click", () => {
-  if (currentLightboxReadingItem) deleteReadingItem(currentLightboxReadingItem);
-});
 
 // ============================================================
 // KHỞI TẠO KHI TẢI TRANG

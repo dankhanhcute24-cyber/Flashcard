@@ -32,31 +32,6 @@
 
   <p id="storageWarning" class="storage-warning" hidden></p>
 
-  <!-- Khu vực "Bài đọc theo cấp độ" - nằm NGAY TRÊN thẻ flashcard chính,
-       2 phần cạnh nhau (trái: chọn cấp độ, phải: tải ảnh lên). Tính năng này
-       CẦN ĐĂNG NHẬP (ảnh lưu trên Cloudinary + Firestore, không có bản
-       localStorage) - hoàn toàn tách biệt khỏi hệ thống bộ thẻ/đồng bộ hiện
-       có, không đụng gì tới appState/saveAppState. Cố tình gọn (xem CSS
-       .reading-grid giới hạn chiều cao, cuộn riêng) để không lấn át thẻ
-       flashcard - trọng tâm chính của trang. -->
-  <div class="readings-section" id="readingsSection">
-    <p id="readingsLoginNotice" class="reading-login-notice">Đăng nhập bằng Google (góc trên bên phải) để xem/tải ảnh bài đọc theo cấp độ.</p>
-
-    <div id="readingsBody" hidden>
-      <div class="readings-controls">
-        <select id="readingLevelSelect" class="deck-select"></select>
-
-        <label for="readingImageInput" class="deck-btn">📤<span class="btn-label"> Tải ảnh lên</span></label>
-        <input type="file" id="readingImageInput" accept="image/*" multiple hidden>
-      </div>
-
-      <p id="readingUploadStatus" class="reading-upload-status" hidden></p>
-
-      <div id="readingGrid" class="reading-grid"></div>
-      <p id="readingEmptyState" class="empty-state reading-empty-state" hidden>Cấp độ này chưa có ảnh bài đọc nào.</p>
-    </div>
-  </div>
-
   <div class="card" id="card">
     <div class="card-content" id="cardContent">
       <!-- Nội dung thẻ sẽ được JavaScript điền vào đây -->
@@ -94,12 +69,6 @@
         Cột theo thứ tự: Chữ Hán | Pinyin | Nghĩa | Câu ví dụ | Pinyin câu ví dụ | Nghĩa câu ví dụ (dòng 1 là tiêu đề). Dữ liệu sẽ nhập vào bộ thẻ đang chọn ở trên.
       </span>
     </div>
-  </div>
-
-  <!-- Xem ảnh bài đọc phóng to toàn màn hình - hiện khi bấm vào 1 ảnh trong lưới -->
-  <div class="modal-overlay lightbox-overlay" id="readingLightboxOverlay">
-    <button type="button" id="readingLightboxDeleteBtn" class="delete-popover-btn lightbox-delete-btn">🗑 Xóa ảnh này</button>
-    <img id="readingLightboxImg" class="lightbox-img" alt="Ảnh bài đọc phóng to">
   </div>
 
   <!-- Form thêm/sửa thẻ - ẩn mặc định, JS sẽ hiện ra khi cần -->
