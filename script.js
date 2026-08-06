@@ -223,7 +223,10 @@ let firestoreFns = null;
 let currentUser = null;
 let unsubscribeSnapshot = null;
 let firebaseReady = false;
-let lastMetaWriteId = null;
+
+// Vài _syncId GẦN ĐÂY (không chỉ 1 cái gần nhất) do CHÍNH máy này ghi lên
+// Firestore - xem giải thích đầy đủ ở writeMetaToCloud()/onSnapshot bên dưới.
+let recentMetaWriteIds = [];
 
 // Bộ nhớ đệm: JSON của mảng "cards" mỗi bộ thẻ ĐÃ đồng bộ lên Firestore
 // THÀNH CÔNG lần gần nhất (deckId -> JSON string). Dùng để BỎ QUA việc ghi
@@ -232,6 +235,12 @@ let lastMetaWriteId = null;
 // hàng nghìn document một cách lãng phí (và tốn quota ghi của Firestore)
 // mỗi khi người dùng chỉ đổi bộ thẻ đang xem.
 const lastSyncedCardsJSON = {};
+
+// Số thẻ THIẾT BỊ NÀY biết chắc đã đồng bộ khớp lần gần nhất cho mỗi bộ thẻ
+// (deckId -> số thẻ). Dùng để quyết định writeDeckToCloud() có cần đọc lại
+// toàn bộ document thẻ (getDocs, tốn kém) để dọn thẻ dư hay không - xem giải
+// thích ở writeDeckToCloud() bên dưới.
+const lastSyncedCardCount = {};
 
 // ============================================================
 // TRẠNG THÁI CHÍNH CỦA APP
@@ -1201,7 +1210,7 @@ const FIREBASE_SDK_VERSION = "10.12.2";
 const FIRESTORE_BATCH_CHUNK_SIZE = 450;
 
 // (Các biến firebaseAuth/firebaseDb/firestoreFns/currentUser/unsubscribeSnapshot/
-// firebaseReady/lastMetaWriteId/lastSyncedCardsJSON đã được khai báo sớm hơn ở
+// firebaseReady/recentMetaWriteIds/lastSyncedCardsJSON đã được khai báo sớm hơn ở
 // phần "TRẠNG THÁI ĐỒNG BỘ FIREBASE" phía trên, ngay trước loadAppState())
 
 // ------------------------------------------------------------
@@ -1253,7 +1262,9 @@ function persistLocalStorageOnly() {
 // deckOrder) trong applyRemoteFullState() bên dưới - xem giải thích ở đó.
 function markDeckSynced(deck) {
   lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+  lastSyncedCardCount[deck.id] = deck.cards.length;
   pendingRetryDeckIds.delete(deck.id);
+  retryBackoffState.delete(deck.id);
   if (!deck.syncedOnce) {
     deck.syncedOnce = true;
     persistLocalStorageOnly();
@@ -1266,6 +1277,17 @@ function markDeckSynced(deck) {
 // lại trang: nếu tải lại trang mà vẫn còn dở dang, lần đồng bộ đầy đủ tiếp
 // theo (handleAuthChange) sẽ tự phát hiện lại và thêm vào đây.
 const pendingRetryDeckIds = new Set();
+
+// Lịch tăng dần thời gian chờ giữa các lần thử lại tự động cho 1 bộ thẻ cứ
+// thất bại liên tục (1 phút -> 5 phút -> 15 phút -> 1 giờ, từ lần thứ 5 trở
+// đi giữ nguyên 1 giờ). Sau MAX_RETRY_ATTEMPTS lần thất bại LIÊN TIẾP, app
+// TỰ DỪNG thử lại tự động (tránh vòng lặp vô hạn tốn quota Firestore nếu có
+// lỗi không thể tự hết, ví dụ sai quyền/Rules) và báo rõ cho người dùng biết,
+// thay vì âm thầm thử mãi mỗi 60 giây như trước - đây chính là nguyên nhân
+// khiến app từng vượt hạn mức đọc/ghi miễn phí của Firestore trong 24h.
+const RETRY_BACKOFF_SCHEDULE_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
+const MAX_RETRY_ATTEMPTS = 6;
+const retryBackoffState = new Map(); // deckId -> { attempts, nextRetryAt }
 
 let syncStatusHideTimer = null;
 // persistent = true -> thông báo LỖI, không tự ẩn (để chắc chắn người dùng
@@ -1286,6 +1308,11 @@ function showSyncStatus(text, persistent = false) {
   }
 }
 
+// Số _syncId gần đây tối đa cần nhớ để nhận ra "tiếng vọng" của chính máy
+// này - xem giải thích ở onSnapshot bên dưới. Vài lần ghi dồn dập (sửa liên
+// tiếp mấy thẻ) là đủ để cần nhớ hơn 1 cái, nhưng không cần nhớ quá nhiều.
+const RECENT_META_WRITE_ID_LIMIT = 8;
+
 // Ghi document nhỏ "users/{uid}" (chỉ activeDeckId + thứ tự các bộ thẻ) -
 // document này luôn nhỏ, không bao giờ có nguy cơ vượt giới hạn dung lượng.
 function writeMetaToCloud() {
@@ -1293,7 +1320,14 @@ function writeMetaToCloud() {
 
   const { doc, setDoc } = firestoreFns;
   const syncId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  lastMetaWriteId = syncId;
+  // Nhớ lại NHIỀU _syncId gần đây (không ghi đè chỉ 1 cái) - nếu ghi liên
+  // tiếp dồn dập (ví dụ sửa liền vài thẻ), xác nhận (ack) của lần ghi TRƯỚC
+  // có thể về SAU khi đã có lần ghi MỚI HƠN - so khớp với danh sách nhiều
+  // _syncId gần đây thay vì chỉ 1 cái mới nhất tránh nhận nhầm ack đến muộn
+  // của chính mình là "thay đổi thật từ thiết bị khác" (từng khiến app tự
+  // tải lại toàn bộ mọi bộ thẻ + mọi thẻ một cách không cần thiết).
+  recentMetaWriteIds.push(syncId);
+  if (recentMetaWriteIds.length > RECENT_META_WRITE_ID_LIMIT) recentMetaWriteIds.shift();
 
   const metaRef = doc(firebaseDb, "users", currentUser.uid);
   setDoc(metaRef, {
@@ -1361,12 +1395,33 @@ async function writeDeckToCloud(deck) {
     // thẻ, hoặc tải đè file Excel mới ít thẻ hơn) - CHỈ làm bước này SAU KHI
     // toàn bộ thẻ MỚI đã ghi thành công ở trên, để không lỡ xóa mất thẻ cũ
     // trong lúc việc ghi thẻ mới đang thất bại giữa chừng.
-    const existingSnap = await getDocs(cardsColRef);
-    const staleDocs = existingSnap.docs.filter((d) => Number(d.id) >= totalCards);
-    for (let i = 0; i < staleDocs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
-      const batch = writeBatch(firebaseDb);
-      staleDocs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
-      await batch.commit();
+    //
+    // CHỈ đọc lại (getDocs) khi bộ CÓ THỂ đã bị rút ngắn so với lần đồng bộ
+    // thành công gần nhất mà CHÍNH máy này biết chắc (totalCards nhỏ hơn), hoặc
+    // khi máy này chưa từng biết số thẻ cũ (lần đầu, đọc 1 lần cho chắc).
+    // Trường hợp phổ biến nhất - sửa nội dung thẻ hoặc THÊM thẻ mới, KHÔNG
+    // xóa thẻ nào - bỏ qua hẳn bước đọc tốn kém này, vì chắc chắn không có gì
+    // để dọn. Đây là 1 trong các nguyên nhân khiến app vượt hạn mức đọc miễn
+    // phí của Firestore: trước đây MỌI lần sửa 1 thẻ trong bộ lớn đều phải
+    // đọc lại TOÀN BỘ document thẻ của bộ đó.
+    //
+    // Đánh đổi: nếu 1 THIẾT BỊ KHÁC từng ghi thêm thẻ mà máy này chưa biết,
+    // rồi máy này ghi đè với ít thẻ hơn NHƯNG vẫn >= số máy này biết, có thể
+    // sót lại vài document thừa trên Firestore. Vô hại về mặt dữ liệu (không
+    // gây mất/sai dữ liệu) - lần đọc sau sẽ phát hiện qua "cardCount" không
+    // khớp (coi là dữ liệu khả nghi, không áp dụng nhầm) và tự dọn lại ở lần
+    // ghi kế tiếp khi cần.
+    const knownPreviousCount = lastSyncedCardCount[deck.id];
+    const mightHaveStaleDocs = knownPreviousCount === undefined || totalCards < knownPreviousCount;
+
+    if (mightHaveStaleDocs) {
+      const existingSnap = await getDocs(cardsColRef);
+      const staleDocs = existingSnap.docs.filter((d) => Number(d.id) >= totalCards);
+      for (let i = 0; i < staleDocs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
+        const batch = writeBatch(firebaseDb);
+        staleDocs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
     }
 
     // MỌI bước ở trên đã thành công -> giờ mới đóng dấu "hoàn tất" với đúng
@@ -1414,7 +1469,9 @@ async function deleteDeckFromCloud(deckId, deckName) {
     }
     await deleteDoc(deckRef);
     delete lastSyncedCardsJSON[deckId];
+    delete lastSyncedCardCount[deckId];
     pendingRetryDeckIds.delete(deckId);
+    retryBackoffState.delete(deckId);
   } catch (error) {
     console.warn(`Lỗi xóa bộ thẻ "${deckName}" trên Firestore:`, error);
     showSyncStatus(`⚠️ Xóa bộ "${deckName}" trên đám mây thất bại - có thể cần thử lại khi có mạng.`, true);
@@ -1437,15 +1494,42 @@ async function retryPendingDeckSyncs() {
 
   retryInFlight = true;
   try {
+    const now = Date.now();
+
     for (const deckId of [...pendingRetryDeckIds]) {
       const deck = appState.decks.find((d) => d.id === deckId);
       if (!deck) {
         // Bộ đã không còn trên máy này nữa (ví dụ người dùng tự xóa trong
         // lúc chờ) - không cần thử lại nữa
         pendingRetryDeckIds.delete(deckId);
+        retryBackoffState.delete(deckId);
         continue;
       }
-      await writeDeckToCloud(deck); // tự xóa khỏi pendingRetryDeckIds bên trong nếu lần này thành công
+
+      // Chưa tới giờ thử lại theo lịch backoff của riêng bộ này - bỏ qua lần
+      // lặp này, để dành cho lần setInterval/online tiếp theo
+      const backoff = retryBackoffState.get(deckId);
+      if (backoff && now < backoff.nextRetryAt) continue;
+
+      const ok = await writeDeckToCloud(deck); // thành công thì tự markDeckSynced() xóa khỏi cả 2 Map/Set bên trong
+      if (ok) continue;
+
+      // Thất bại - tính số lần thất bại LIÊN TIẾP, hoặc dừng hẳn nếu đã chạm
+      // giới hạn (KHÔNG để vòng lặp thử mãi vô hạn - đây chính là nguyên
+      // nhân gây vượt hạn mức Firestore trước đây).
+      const attempts = (backoff ? backoff.attempts : 0) + 1;
+      if (attempts >= MAX_RETRY_ATTEMPTS) {
+        pendingRetryDeckIds.delete(deckId);
+        retryBackoffState.delete(deckId);
+        showSyncStatus(
+          `⚠️ Bộ "${deck.name}" đã thử đồng bộ ${attempts} lần liên tiếp đều thất bại - đã TẠM DỪNG tự động thử lại để tránh tốn quota. ` +
+            `Dữ liệu trên máy này vẫn còn nguyên vẹn. Hãy kiểm tra kết nối mạng, sau đó sửa lại 1 thẻ bất kỳ trong bộ này (hoặc tải lại trang) để thử đồng bộ lại.`,
+          true
+        );
+      } else {
+        const delayMs = RETRY_BACKOFF_SCHEDULE_MS[Math.min(attempts - 1, RETRY_BACKOFF_SCHEDULE_MS.length - 1)];
+        retryBackoffState.set(deckId, { attempts, nextRetryAt: now + delayMs });
+      }
     }
   } finally {
     retryInFlight = false;
@@ -1741,9 +1825,10 @@ async function handleAuthChange(user) {
       if (!snap.exists()) return;
       const data = snap.data();
 
-      // _syncId trùng với lần ghi gần nhất của CHÍNH máy này -> đây chỉ là
-      // xác nhận (ack) của thao tác vừa lưu, không phải thay đổi từ nơi khác
-      if (data._syncId && data._syncId === lastMetaWriteId) return;
+      // _syncId khớp với 1 trong vài lần ghi GẦN ĐÂY của CHÍNH máy này -> đây
+      // chỉ là xác nhận (ack, có thể đến hơi muộn) của (1 trong) các thao
+      // tác vừa lưu, không phải thay đổi từ nơi khác
+      if (data._syncId && recentMetaWriteIds.includes(data._syncId)) return;
       if (snap.metadata.hasPendingWrites) return;
 
       const deckOrder = Array.isArray(data.deckOrder) ? data.deckOrder : [];
