@@ -191,8 +191,6 @@ const authAvatarEl = document.getElementById("authAvatar");
 const authNameEl = document.getElementById("authName");
 const syncStatusEl = document.getElementById("syncStatus");
 
-const openReadingsBtn = document.getElementById("openReadingsBtn");
-const readingsModalOverlay = document.getElementById("readingsModalOverlay");
 const readingsLoginNotice = document.getElementById("readingsLoginNotice");
 const readingsBody = document.getElementById("readingsBody");
 const readingLevelSelectEl = document.getElementById("readingLevelSelect");
@@ -200,7 +198,6 @@ const readingImageInput = document.getElementById("readingImageInput");
 const readingUploadStatusEl = document.getElementById("readingUploadStatus");
 const readingGridEl = document.getElementById("readingGrid");
 const readingEmptyStateEl = document.getElementById("readingEmptyState");
-const closeReadingsBtn = document.getElementById("closeReadingsBtn");
 const readingLightboxOverlay = document.getElementById("readingLightboxOverlay");
 const readingLightboxImg = document.getElementById("readingLightboxImg");
 const readingLightboxDeleteBtn = document.getElementById("readingLightboxDeleteBtn");
@@ -1109,7 +1106,6 @@ document.addEventListener("keydown", (event) => {
   if (cardDeletePopover.classList.contains("open")) closeCardDeletePopover();
   if (deckDeletePopover.classList.contains("open")) closeDeckDeletePopover();
   if (readingLightboxOverlay.classList.contains("open")) closeReadingLightbox();
-  else if (readingsModalOverlay.classList.contains("open")) closeReadingsModal();
 });
 
 // Lưu thẻ khi bấm nút "Lưu" trong form (thêm mới hoặc cập nhật thẻ đang sửa)
@@ -1702,15 +1698,12 @@ async function handleAuthChange(user) {
     syncStatusEl.hidden = true;
 
     // Đăng xuất -> dọn sạch dữ liệu ảnh bài đọc đang giữ trong bộ nhớ (thuộc
-    // về tài khoản vừa đăng xuất) và đóng modal/lightbox nếu đang mở, tránh
-    // hiện nhầm ảnh của tài khoản cũ nếu người dùng mở lại modal lúc chưa
-    // đăng nhập tài khoản khác.
+    // về tài khoản vừa đăng xuất), đóng lightbox nếu đang mở, và chuyển khu
+    // "Bài đọc" (luôn hiện trên trang) về lại trạng thái "yêu cầu đăng nhập".
     readingItems = [];
     closeReadingLightbox();
-    if (readingsModalOverlay.classList.contains("open")) {
-      readingsLoginNotice.hidden = false;
-      readingsBody.hidden = true;
-    }
+    readingsLoginNotice.hidden = false;
+    readingsBody.hidden = true;
     return;
   }
 
@@ -1718,6 +1711,11 @@ async function handleAuthChange(user) {
   authUserEl.hidden = false;
   authAvatarEl.src = user.photoURL || "";
   authNameEl.textContent = user.displayName || user.email || "";
+
+  // Tải khu "Bài đọc" song song với phần đồng bộ bộ thẻ bên dưới - 2 hệ
+  // thống độc lập nhau, không cần đợi lẫn nhau (xem đầu phần "BÀI ĐỌC THEO
+  // CẤP ĐỘ" cuối file).
+  loadAndShowReadingsSection();
 
   const { doc, getDoc, onSnapshot } = firestoreFns;
   const metaRef = doc(firebaseDb, "users", user.uid);
@@ -1882,8 +1880,9 @@ async function initFirebase() {
 //
 // Tính năng HOÀN TOÀN TÁCH BIỆT khỏi hệ thống bộ thẻ ở trên - không đụng gì
 // tới appState/saveAppState/localStorage. CẦN ĐĂNG NHẬP mới dùng được (ảnh
-// chỉ lưu trên đám mây, không có bản offline) - chưa đăng nhập thì modal chỉ
-// hiện thông báo yêu cầu đăng nhập, không có gì để mất/hỏng.
+// chỉ lưu trên đám mây, không có bản offline) - chưa đăng nhập thì khu vực
+// này (nằm ngay trên thẻ flashcard, xem index.html) chỉ hiện thông báo yêu
+// cầu đăng nhập, không có gì để mất/hỏng.
 //
 // Cấu trúc lưu trữ:
 //   Cloudinary: thư mục readings/{level}/... (tải lên qua "unsigned upload
@@ -1992,9 +1991,10 @@ function renderReadingGrid() {
   readingEmptyStateEl.hidden = items.length > 0;
 }
 
-async function openReadingsModal() {
-  readingsModalOverlay.classList.add("open");
-
+// Khu "Bài đọc" giờ nằm THẲNG trên trang (không còn là modal cần bấm mở) -
+// gọi hàm này ngay sau khi đăng nhập thành công (xem handleAuthChange) để
+// hiện khu vực này lên và tải danh sách ảnh 1 lần.
+async function loadAndShowReadingsSection() {
   if (!firebaseReady || !currentUser || !firestoreFns) {
     readingsLoginNotice.hidden = false;
     readingsBody.hidden = true;
@@ -2015,7 +2015,7 @@ async function openReadingsModal() {
   } catch (error) {
     console.warn("Lỗi tải danh sách ảnh bài đọc:", error);
     readingItems = [];
-    readingEmptyStateEl.textContent = "⚠️ Không tải được danh sách ảnh (mất mạng?). Thử đóng rồi mở lại.";
+    readingEmptyStateEl.textContent = "⚠️ Không tải được danh sách ảnh (mất mạng?). Thử tải lại trang.";
     return;
   }
 
@@ -2023,16 +2023,6 @@ async function openReadingsModal() {
   renderReadingLevelSelect();
   renderReadingGrid();
 }
-
-function closeReadingsModal() {
-  readingsModalOverlay.classList.remove("open");
-}
-
-openReadingsBtn.addEventListener("click", openReadingsModal);
-closeReadingsBtn.addEventListener("click", closeReadingsModal);
-readingsModalOverlay.addEventListener("click", (event) => {
-  if (event.target === readingsModalOverlay) closeReadingsModal();
-});
 
 readingLevelSelectEl.addEventListener("change", () => {
   if (readingLevelSelectEl.value === NEW_READING_LEVEL_OPTION_VALUE) {
