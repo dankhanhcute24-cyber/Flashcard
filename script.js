@@ -1947,6 +1947,49 @@ async function handleAuthChange(user) {
       const deckOrder = Array.isArray(data.deckOrder) ? data.deckOrder : [];
       if (deckOrder.length === 0) return; // dữ liệu rỗng bất thường - xem giải thích ở trên, bỏ qua
 
+      // TỐI ƯU QUAN TRỌNG - NGUYÊN NHÂN GỐC CỦA VIỆC VƯỢT HẠN MỨC ĐỌC:
+      // onSnapshot BẮT BUỘC bắn ra ít nhất 1 lần ngay khi vừa đăng ký (kể cả
+      // khi KHÔNG CÓ gì thay đổi thật - đây là hành vi mặc định của Firestore,
+      // không phải lỗi), và bắn lại MỖI KHI document "users/{uid}" đổi - kể cả
+      // khi chỉ "activeDeckId" đổi (tức là 1 THIẾT BỊ KHÁC chỉ đơn giản chuyển
+      // sang xem 1 bộ thẻ khác, KHÔNG hề thêm/xóa bộ nào). Trước đây, MỌI lần
+      // bắn callback đều gọi fetchDecksByIds() - đọc LẠI TOÀN BỘ document của
+      // MỌI bộ thẻ + MỌI thẻ trong từng bộ (getDocs cả subcollection "cards"),
+      // dù thực ra chẳng có gì thay đổi ngoài "đang xem bộ nào". Nếu người
+      // dùng mở app trên 2+ thiết bị cùng lúc (điện thoại + iPad...) và chỉ
+      // đơn giản CHUYỂN QUA LẠI GIỮA CÁC BỘ THẺ khi học (thao tác rất bình
+      // thường, không phải "thao tác nhiều"), MỖI lần chuyển bộ ở 1 thiết bị
+      // sẽ khiến MỌI thiết bị khác đang mở app tự động tải lại TOÀN BỘ hàng
+      // nghìn thẻ - đây chính là kiểu vòng lặp khiến lượt đọc tăng vọt lên
+      // hàng trăm nghìn dù không ai chủ động làm gì nhiều.
+      //
+      // Sửa: so sánh TẬP HỢP id các bộ thẻ vừa nhận với tập hợp đang có trên
+      // máy này. Nếu HOÀN TOÀN GIỐNG NHAU (không bộ nào được thêm/xóa ở nơi
+      // khác), thay đổi duy nhất CÓ THỂ có là "activeDeckId" - áp dụng ngay
+      // tại chỗ (rẻ, không cần Firestore), KHÔNG gọi fetchDecksByIds(). CHỈ
+      // khi tập hợp id THỰC SỰ khác (có bộ được thêm/xóa ở thiết bị khác) mới
+      // cần tải lại đầy đủ như cũ.
+      const localDeckIds = new Set(appState.decks.map((deck) => deck.id));
+      const deckSetUnchanged =
+        localDeckIds.size === deckOrder.length && deckOrder.every((id) => localDeckIds.has(id));
+
+      if (deckSetUnchanged) {
+        if (
+          data.activeDeckId &&
+          data.activeDeckId !== appState.activeDeckId &&
+          appState.decks.some((deck) => deck.id === data.activeDeckId)
+        ) {
+          appState.activeDeckId = data.activeDeckId;
+          cards = getActiveDeck().cards;
+          currentIndex = 0;
+          isFlipped = false;
+          persistLocalStorageOnly();
+          renderDeckSelect();
+          renderCard();
+        }
+        return;
+      }
+
       fetchDecksByIds(user.uid, deckOrder)
         .then((remoteDecks) => {
           const suspiciousCount = applyRemoteFullState({ activeDeckId: data.activeDeckId, decks: remoteDecks });
