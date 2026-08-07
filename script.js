@@ -1373,8 +1373,49 @@ async function writeDeckToCloud(deck) {
   const totalCards = deck.cards.length;
   let writtenCount = 0;
 
+  // CHỈ GHI LẠI NHỮNG THẺ THỰC SỰ THAY ĐỔI - so sánh với bản đã xác nhận
+  // đồng bộ gần nhất (lastSyncedCardsJSON, JSON của TOÀN BỘ mảng cards lúc đó
+  // - luôn cập nhật sau mỗi lần ghi/đọc thành công, xem markDeckSynced() và
+  // applyRemoteFullState()). TRƯỚC ĐÂY: mỗi lần lưu (kể cả chỉ thêm ĐÚNG 1
+  // thẻ mới) đều ghi lại document Firestore cho MỌI thẻ trong bộ, từ vị trí 0
+  // - với 1 bộ ~10.000+ thẻ, thêm 1 thẻ mới cũng tốn ~10.000 lượt ghi Firestore
+  // (chia thành hàng chục batch tuần tự, rất chậm và dễ chạm hạn mức ghi miễn
+  // phí hàng ngày). Bây giờ: chỉ những VỊ TRÍ có nội dung khác bản cũ (thẻ mới
+  // thêm vào cuối, hoặc thẻ bị sửa) mới được ghi lại - thêm 1 thẻ vào bộ
+  // 10.908 thẻ giờ chỉ tốn ĐÚNG 1 lượt ghi thay vì 10.909.
+  //
+  // Lưu ý: nếu KHÔNG có gì để so sánh (lần đầu đồng bộ bộ này, hoặc dữ liệu
+  // trước đó bị đánh dấu khả nghi/dở dang), ghi lại TOÀN BỘ như cũ - an toàn,
+  // không thể dựa vào 1 bản so sánh không đáng tin.
+  let previousCards = null;
+  const previousCardsJSON = lastSyncedCardsJSON[deck.id];
+  if (previousCardsJSON !== undefined) {
+    try {
+      const parsed = JSON.parse(previousCardsJSON);
+      if (Array.isArray(parsed)) previousCards = parsed;
+    } catch (error) {
+      previousCards = null;
+    }
+  }
+
+  let indicesToWrite;
+  if (previousCards) {
+    indicesToWrite = [];
+    for (let i = 0; i < totalCards; i++) {
+      const prevCardJSON = i < previousCards.length ? JSON.stringify(previousCards[i]) : undefined;
+      const newCardJSON = JSON.stringify(deck.cards[i]);
+      if (prevCardJSON !== newCardJSON) indicesToWrite.push(i);
+    }
+  } else {
+    indicesToWrite = Array.from({ length: totalCards }, (_, i) => i);
+  }
+  const totalToWrite = indicesToWrite.length;
+
   showSyncStatus("⏳ Đang đồng bộ...");
-  console.log(`[Sync][ghi] Bắt đầu ghi bộ "${deck.name}" (id: ${deck.id}) - ${totalCards} thẻ.`);
+  console.log(
+    `[Sync][ghi] Bắt đầu ghi bộ "${deck.name}" (id: ${deck.id}) - tổng ${totalCards} thẻ, ` +
+      `${totalToWrite} thẻ cần ghi lại${previousCards ? " (chỉ phần thay đổi)" : " (ghi toàn bộ - chưa có bản để so sánh)"}.`
+  );
 
   try {
     // merge: true - CHƯA đụng tới field "cardCount" (nếu có từ lần đồng bộ
@@ -1386,14 +1427,16 @@ async function writeDeckToCloud(deck) {
     await metaBatch.commit();
     console.log(`[Sync][ghi] Bộ "${deck.name}": đã ghi tên bộ (bước 1/3) - cardCount CHƯA đổi, thẻ CHƯA ghi.`);
 
-    // Ghi từng đợt tối đa FIRESTORE_BATCH_CHUNK_SIZE thẻ, TUẦN TỰ (đợt sau
-    // chỉ chạy khi đợt trước đã ghi THÀNH CÔNG) - nếu 1 đợt lỗi giữa chừng
-    // (mất mạng, hết quota...), dừng ngay tại đây, KHÔNG động vào dữ liệu cục
-    // bộ (biến "cards" trên máy vẫn còn nguyên như trước khi gọi hàm này).
-    for (let start = 0; start < totalCards; start += FIRESTORE_BATCH_CHUNK_SIZE) {
-      const end = Math.min(start + FIRESTORE_BATCH_CHUNK_SIZE, totalCards);
+    // Ghi từng đợt tối đa FIRESTORE_BATCH_CHUNK_SIZE thẻ ĐÃ THAY ĐỔI, TUẦN TỰ
+    // (đợt sau chỉ chạy khi đợt trước đã ghi THÀNH CÔNG) - nếu 1 đợt lỗi giữa
+    // chừng (mất mạng, hết quota...), dừng ngay tại đây, KHÔNG động vào dữ
+    // liệu cục bộ (biến "cards" trên máy vẫn còn nguyên như trước khi gọi
+    // hàm này).
+    for (let start = 0; start < totalToWrite; start += FIRESTORE_BATCH_CHUNK_SIZE) {
+      const end = Math.min(start + FIRESTORE_BATCH_CHUNK_SIZE, totalToWrite);
       const batch = writeBatch(firebaseDb);
-      for (let i = start; i < end; i++) {
+      for (let j = start; j < end; j++) {
+        const i = indicesToWrite[j];
         const card = deck.cards[i];
         batch.set(doc(cardsColRef, cardDocId(i)), {
           hanzi: card.hanzi || "",
@@ -1408,7 +1451,7 @@ async function writeDeckToCloud(deck) {
       }
       await batch.commit();
       writtenCount = end;
-      console.log(`[Sync][ghi] Bộ "${deck.name}": đã ghi ${writtenCount}/${totalCards} thẻ (bước 2/3, đang tiếp tục nếu còn).`);
+      console.log(`[Sync][ghi] Bộ "${deck.name}": đã ghi ${writtenCount}/${totalToWrite} thẻ thay đổi (bước 2/3, đang tiếp tục nếu còn).`);
     }
 
     // Dọn các document thẻ CŨ dư ra (nếu bộ vừa bị rút ngắn - ví dụ xóa bớt
@@ -1461,14 +1504,20 @@ async function writeDeckToCloud(deck) {
     showSyncStatus("☁️ Đã đồng bộ");
     return true;
   } catch (error) {
-    console.warn(`[Sync][ghi] Bộ "${deck.name}": LỖI giữa chừng (đã ghi ${writtenCount}/${totalCards} thẻ, cardCount CHƯA đóng dấu mới) -`, error);
+    console.warn(
+      `[Sync][ghi] Bộ "${deck.name}": LỖI giữa chừng (đã ghi ${writtenCount}/${totalToWrite} thẻ thay đổi, cardCount CHƯA đóng dấu mới) -`,
+      error
+    );
     // Đánh dấu bộ này ĐANG CẦN thử ghi lại - retryPendingDeckSyncs() sẽ tự
     // động thử lại khi có mạng trở lại (sự kiện "online") hoặc theo chu kỳ,
-    // KHÔNG cần người dùng phải tự sửa 1 thẻ nào đó để "kích hoạt" nữa.
+    // KHÔNG cần người dùng phải tự sửa 1 thẻ nào đó để "kích hoạt" nữa. Lần
+    // thử lại tiếp theo sẽ tự tính lại đúng danh sách thẻ còn thiếu (so với
+    // bản ĐÃ XÁC NHẬN gần nhất - KHÔNG phải bản vừa thất bại này), không cần
+    // nhớ chính xác đã dừng ở đâu.
     pendingRetryDeckIds.add(deck.id);
     showSyncStatus(
-      `⚠️ Đồng bộ bộ "${deck.name}" thất bại giữa chừng: đã ghi được ${writtenCount}/${totalCards} thẻ lên đám mây, ` +
-        `còn ${totalCards - writtenCount} thẻ chưa đồng bộ. Dữ liệu trên máy này vẫn giữ nguyên đầy đủ, không mất gì - ` +
+      `⚠️ Đồng bộ bộ "${deck.name}" thất bại giữa chừng: đã ghi được ${writtenCount}/${totalToWrite} thẻ thay đổi lên đám mây. ` +
+        `Dữ liệu trên máy này vẫn giữ nguyên đầy đủ (${totalCards} thẻ), không mất gì - ` +
         `app sẽ tự thử đồng bộ lại khi có mạng ổn định.`,
       true
     );
