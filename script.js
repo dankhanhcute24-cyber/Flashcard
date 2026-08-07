@@ -1374,6 +1374,7 @@ async function writeDeckToCloud(deck) {
   let writtenCount = 0;
 
   showSyncStatus("⏳ Đang đồng bộ...");
+  console.log(`[Sync][ghi] Bắt đầu ghi bộ "${deck.name}" (id: ${deck.id}) - ${totalCards} thẻ.`);
 
   try {
     // merge: true - CHƯA đụng tới field "cardCount" (nếu có từ lần đồng bộ
@@ -1383,6 +1384,7 @@ async function writeDeckToCloud(deck) {
     const metaBatch = writeBatch(firebaseDb);
     metaBatch.set(deckRef, { name: deck.name }, { merge: true });
     await metaBatch.commit();
+    console.log(`[Sync][ghi] Bộ "${deck.name}": đã ghi tên bộ (bước 1/3) - cardCount CHƯA đổi, thẻ CHƯA ghi.`);
 
     // Ghi từng đợt tối đa FIRESTORE_BATCH_CHUNK_SIZE thẻ, TUẦN TỰ (đợt sau
     // chỉ chạy khi đợt trước đã ghi THÀNH CÔNG) - nếu 1 đợt lỗi giữa chừng
@@ -1406,6 +1408,7 @@ async function writeDeckToCloud(deck) {
       }
       await batch.commit();
       writtenCount = end;
+      console.log(`[Sync][ghi] Bộ "${deck.name}": đã ghi ${writtenCount}/${totalCards} thẻ (bước 2/3, đang tiếp tục nếu còn).`);
     }
 
     // Dọn các document thẻ CŨ dư ra (nếu bộ vừa bị rút ngắn - ví dụ xóa bớt
@@ -1434,6 +1437,10 @@ async function writeDeckToCloud(deck) {
     if (mightHaveStaleDocs) {
       const existingSnap = await getDocs(cardsColRef);
       const staleDocs = existingSnap.docs.filter((d) => Number(d.id) >= totalCards);
+      console.log(
+        `[Sync][ghi] Bộ "${deck.name}": kiểm tra dọn thẻ dư (knownPreviousCount=${knownPreviousCount === undefined ? "chưa biết" : knownPreviousCount}) - ` +
+          `tìm thấy ${staleDocs.length} thẻ dư cần xóa trong ${existingSnap.docs.length} thẻ đọc được.`
+      );
       for (let i = 0; i < staleDocs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
         const batch = writeBatch(firebaseDb);
         staleDocs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
@@ -1448,12 +1455,13 @@ async function writeDeckToCloud(deck) {
     const stampBatch = writeBatch(firebaseDb);
     stampBatch.set(deckRef, { name: deck.name, cardCount: totalCards }, { merge: true });
     await stampBatch.commit();
+    console.log(`[Sync][ghi] Bộ "${deck.name}": đã đóng dấu cardCount=${totalCards} (bước 3/3, HOÀN TẤT).`);
 
     markDeckSynced(deck);
     showSyncStatus("☁️ Đã đồng bộ");
     return true;
   } catch (error) {
-    console.warn(`Lỗi đồng bộ bộ thẻ "${deck.name}" lên Firestore:`, error);
+    console.warn(`[Sync][ghi] Bộ "${deck.name}": LỖI giữa chừng (đã ghi ${writtenCount}/${totalCards} thẻ, cardCount CHƯA đóng dấu mới) -`, error);
     // Đánh dấu bộ này ĐANG CẦN thử ghi lại - retryPendingDeckSyncs() sẽ tự
     // động thử lại khi có mạng trở lại (sự kiện "online") hoặc theo chu kỳ,
     // KHÔNG cần người dùng phải tự sửa 1 thẻ nào đó để "kích hoạt" nữa.
@@ -1481,13 +1489,20 @@ async function deleteDeckFromCloud(deckId, deckName) {
     const deckRef = doc(firebaseDb, "users", currentUser.uid, "decks", deckId);
     const cardsColRef = collection(deckRef, "cards");
     const existingSnap = await getDocs(cardsColRef);
+    console.log(`[Sync][xóa] Bộ "${deckName}" (id: ${deckId}): bắt đầu xóa ${existingSnap.docs.length} thẻ.`);
 
     for (let i = 0; i < existingSnap.docs.length; i += FIRESTORE_BATCH_CHUNK_SIZE) {
       const batch = writeBatch(firebaseDb);
       existingSnap.docs.slice(i, i + FIRESTORE_BATCH_CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
       await batch.commit();
     }
+    // LƯU Ý: tại đây mọi document THẺ đã bị xóa, nhưng document BỘ THẺ
+    // (deckRef) vẫn còn tồn tại - nếu 1 thiết bị khác đọc đúng lúc này, sẽ
+    // thấy "0 thẻ" (KHÔNG phải rỗng đã xác nhận, vì cardCount cũ vẫn còn) ->
+    // đúng nhánh "inconsistent" ở fetchDecksByIds/applyRemoteFullState, được
+    // xử lý AN TOÀN (giữ nguyên dữ liệu cũ, không ghi đè) - không phải lỗi.
     await deleteDoc(deckRef);
+    console.log(`[Sync][xóa] Bộ "${deckName}": đã xóa xong document bộ thẻ - HOÀN TẤT.`);
     delete lastSyncedCardsJSON[deckId];
     delete lastSyncedCardCount[deckId];
     pendingRetryDeckIds.delete(deckId);
@@ -1681,7 +1696,10 @@ async function fetchDecksByIds(uid, deckIds) {
   for (const deckId of deckIds) {
     const deckRef = doc(firebaseDb, "users", uid, "decks", deckId);
     const deckSnap = await getDoc(deckRef);
-    if (!deckSnap.exists()) continue; // tham chiếu cũ tới bộ đã bị xóa - bỏ qua
+    if (!deckSnap.exists()) {
+      console.log(`[Sync][đọc] Bộ "${deckId}": document bộ thẻ không tồn tại trên Firestore - bỏ qua (có thể đã bị xóa).`);
+      continue; // tham chiếu cũ tới bộ đã bị xóa - bỏ qua
+    }
 
     const deckData = deckSnap.data();
     const cardsSnap = await getDocs(collection(deckRef, "cards"));
@@ -1690,10 +1708,24 @@ async function fetchDecksByIds(uid, deckIds) {
       .sort((a, b) => Number(a.id) - Number(b.id))
       .map((d) => d.data());
 
+    // "declaredCount" là số thẻ CHÍNH THIẾT BỊ NÀO ĐÓ đã ĐÓNG DẤU xác nhận
+    // "ghi xong hẳn" cho bộ này (xem bước cuối của writeDeckToCloud()) - đây
+    // là cách duy nhất để phân biệt 2 tình huống trông GIỐNG HỆT NHAU khi chỉ
+    // nhìn "cards.length":
+    //   - declaredCount === 0  -> bộ này ĐÃ được xác nhận rỗng THẬT SỰ (người
+    //     dùng chủ động xóa hết thẻ) - ĐÁNG TIN, không phải dở dang.
+    //   - declaredCount === undefined (chưa từng đóng dấu) hoặc khác số thẻ
+    //     đọc được -> KHÔNG đáng tin, có thể đang ghi dở dang giữa chừng.
     const declaredCount = deckData.cardCount;
     const inconsistent = typeof declaredCount === "number" && declaredCount !== cards.length;
 
-    decks.push({ id: deckId, name: deckData.name || deckId, cards, inconsistent });
+    console.log(
+      `[Sync][đọc] Bộ "${deckData.name || deckId}" (id: ${deckId}): đọc được ${cards.length} thẻ, ` +
+        `cardCount đã đóng dấu = ${declaredCount === undefined ? "(chưa từng đóng dấu)" : declaredCount}` +
+        (inconsistent ? " -> KHÔNG khớp, coi là dở dang." : "")
+    );
+
+    decks.push({ id: deckId, name: deckData.name || deckId, cards, declaredCount, inconsistent });
   }
 
   return decks;
@@ -1742,7 +1774,20 @@ function applyRemoteFullState(remote) {
   const safeDecks = remoteDecksToApply.map((remoteDeck) => {
     const localDeck = localDecksById.get(remoteDeck.id);
     const remoteCardCount = Array.isArray(remoteDeck.cards) ? remoteDeck.cards.length : 0;
-    const isEmptyButLocalHasData = remoteCardCount === 0 && localDeck && localDeck.cards.length > 0;
+
+    // QUAN TRỌNG: "rỗng" (0 thẻ) chỉ đáng ngờ khi KHÔNG có gì xác nhận đó là
+    // rỗng THẬT SỰ. Nếu writeDeckToCloud() đã ĐÓNG DẤU cardCount = 0 (bước
+    // CUỐI CÙNG, chỉ chạy khi MỌI bước ghi trước đó đã xong hẳn - xem giải
+    // thích ở writeDeckToCloud), nghĩa là 1 thiết bị nào đó đã CHỦ ĐỘNG xóa
+    // hết thẻ trong bộ này và xác nhận xong xuôi - đây là rỗng THẬT, phải cho
+    // đồng bộ bình thường. TRƯỚC ĐÂY code coi MỌI trường hợp "0 thẻ" đều là
+    // khả nghi bất kể có đóng dấu hay không - khiến việc người dùng chủ động
+    // xóa hết thẻ trong 1 bộ (ví dụ để soạn lại từ đầu) KHÔNG BAO GIỜ đồng bộ
+    // được sang thiết bị khác: thiết bị kia cứ giữ mãi bản thẻ CŨ, coi là "tải
+    // về rỗng bất thường", rồi còn ĐẨY NGƯỢC bản cũ đó lên Firestore - chính
+    // là kiểu "app không đồng bộ dữ liệu giữa các thiết bị" đã gặp phải.
+    const isConfirmedEmpty = remoteDeck.declaredCount === 0;
+    const isEmptyButLocalHasData = remoteCardCount === 0 && !isConfirmedEmpty && localDeck && localDeck.cards.length > 0;
     const isInconsistent = remoteDeck.inconsistent === true;
 
     if (isEmptyButLocalHasData || isInconsistent) {
@@ -1760,6 +1805,8 @@ function applyRemoteFullState(remote) {
       // giữ thay thế, đành áp dụng tạm dữ liệu khả nghi này (còn hơn không
       // có gì), nhưng vẫn báo rõ để người dùng biết có thể chưa đầy đủ.
       console.warn(`Bộ thẻ "${remoteDeck.name}" có thể chưa đồng bộ đầy đủ trên đám mây - đã tải tạm, sẽ tự kiểm tra lại.`);
+    } else if (remoteCardCount === 0 && isConfirmedEmpty) {
+      console.log(`[Sync][đọc] Bộ "${remoteDeck.name}": rỗng nhưng ĐÃ ĐƯỢC XÁC NHẬN (cardCount đóng dấu = 0) - áp dụng bình thường, không coi là khả nghi.`);
     }
     return remoteDeck;
   });
@@ -1826,6 +1873,15 @@ function applyRemoteFullState(remote) {
   finalDecks.forEach((deck) => {
     if (!pendingRetryDeckIds.has(deck.id)) {
       lastSyncedCardsJSON[deck.id] = JSON.stringify(deck.cards);
+      // QUAN TRỌNG: cũng phải cập nhật lastSyncedCardCount ở đây, không chỉ
+      // trong markDeckSynced() (chỉ chạy sau khi GHI thành công). Biến này
+      // TRƯỚC ĐÂY chỉ được set sau khi GHI, không bao giờ set sau khi ĐỌC -
+      // nên sau MỖI lần tải lại trang (biến bị reset về rỗng), lần sửa thẻ
+      // ĐẦU TIÊN sau đó luôn bị coi là "chưa biết số thẻ cũ", khiến
+      // writeDeckToCloud() phải đọc lại + có thể dọn "thẻ dư" một cách không
+      // cần thiết - dữ liệu mới tải về ở đây CHÍNH LÀ số thẻ THẬT SỰ đang có,
+      // nên ghi nhận luôn để lần ghi tiếp theo có cơ sở đáng tin cậy hơn.
+      lastSyncedCardCount[deck.id] = deck.cards.length;
     }
   });
 
